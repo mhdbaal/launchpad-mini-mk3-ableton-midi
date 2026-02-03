@@ -13,6 +13,8 @@ class ChannelStripComponentWithArmToggle(ChannelStripComponent):
     Behavior:
     - Click on unselected track -> Select the track (green button)
     - Click on selected track -> Toggle arm state (red if armed, green if not)
+    - Respects Ableton's Exclusive Arm preference setting
+    - Supports multi-track selection (arms/disarms all selected tracks)
     """
 
     def __init__(self, *a, **k):
@@ -41,9 +43,21 @@ class ChannelStripComponentWithArmToggle(ChannelStripComponent):
                 # Track not selected: select it (original behavior)
                 self.song.view.selected_track = self._track
             else:
-                # Track already selected: toggle arm
+                # Track already selected: toggle arm (respect exclusive arm preference)
                 if self._track.can_be_armed:
-                    self._track.arm = not self._track.arm
+                    arm_exclusive = self.song.exclusive_arm
+                    new_value = not self._track.arm
+                    respect_multi_selection = self._track.is_part_of_selection
+
+                    # Apply arm state to target track(s) and handle exclusive disarming
+                    for track in self.song.tracks:
+                        if track.can_be_armed:
+                            # Arm/disarm target track and any multi-selected tracks
+                            if track == self._track or (respect_multi_selection and track.is_part_of_selection):
+                                track.arm = new_value
+                            # In exclusive mode, disarm other tracks when arming
+                            elif arm_exclusive and track.arm:
+                                track.arm = False
 
     def _update_select_button(self):
         """
