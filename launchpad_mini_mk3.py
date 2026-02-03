@@ -64,22 +64,23 @@ class Launchpad_Mini_MK3(NovationBase):
           support_momentary_mode_cycling=False,
           layer=Layer(cycle_mode_button=self._shift_button))
         bottom_row = self._elements.clip_launch_matrix.submatrix[:, 7:8]
-        self._stop_solo_mute_modes.add_mode("launch",
-          None, cycle_mode_button_color="Mode.Launch.On")
-        self._stop_solo_mute_modes.add_mode("stop",
-          (AddLayerMode(self._session, Layer(stop_track_clip_buttons=bottom_row))),
-          cycle_mode_button_color="Session.StopClip")
-        self._stop_solo_mute_modes.add_mode("solo",
-          (AddLayerMode(self._mixer, Layer(solo_buttons=bottom_row))),
-          cycle_mode_button_color="Mixer.SoloOn")
-        self._stop_solo_mute_modes.add_mode("mute",
-          (AddLayerMode(self._mixer, Layer(mute_buttons=bottom_row))),
-          cycle_mode_button_color="Mixer.MuteOff")
-        # NEW: Add select mode
+        # Mode 1: Select (Arm/Select) - EN PREMIER
         self._stop_solo_mute_modes.add_mode("select",
           (AddLayerMode(self._mixer, Layer(track_select_buttons=bottom_row))),
           cycle_mode_button_color="Mixer.TrackSelected")
-        self._stop_solo_mute_modes.selected_mode = "launch"
+        # Mode 2: Stop
+        self._stop_solo_mute_modes.add_mode("stop",
+          (AddLayerMode(self._session, Layer(stop_track_clip_buttons=bottom_row))),
+          cycle_mode_button_color="Session.StopClip")
+        # Mode 3: Solo
+        self._stop_solo_mute_modes.add_mode("solo",
+          (AddLayerMode(self._mixer, Layer(solo_buttons=bottom_row))),
+          cycle_mode_button_color="Mixer.SoloOn")
+        # Mode 4: Mute
+        self._stop_solo_mute_modes.add_mode("mute",
+          (AddLayerMode(self._mixer, Layer(mute_buttons=bottom_row))),
+          cycle_mode_button_color="Mixer.MuteOff")
+        self._stop_solo_mute_modes.selected_mode = "select"
         # Configure shift button for clip copy (clip slots only)
         self._session.set_modifier_button(self._shift_button, "copy_shift", clip_slots_only=True)
         # Configure shift button for scene copy (scenes only)
