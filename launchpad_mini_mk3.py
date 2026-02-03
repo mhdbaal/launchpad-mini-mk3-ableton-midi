@@ -10,6 +10,7 @@ from novation.session_modes import SessionModesComponent
 from . import sysex_ids as ids
 from .channel_strip_with_arm_toggle import ChannelStripComponentWithArmToggle
 from .clip_copy_component import ClipCopyComponent
+from .scene_copy_component import SceneCopyComponent
 from .elements import Elements
 from .notifying_background import NotifyingBackgroundComponent
 from .session_with_copy import SessionComponentWithCopy
@@ -47,9 +48,14 @@ class Launchpad_Mini_MK3(NovationBase):
         return super(Launchpad_Mini_MK3, self)._create_session_layer() + Layer(scene_launch_buttons="scene_launch_buttons")
 
     def _create_clip_copy(self):
-        """Create clip copy-paste handler."""
+        """Create clip and scene copy-paste handlers."""
+        # Clip copy handler
         self._clip_copy = ClipCopyComponent(name="Clip_Copy")
         self._session.set_copy_handler(self._clip_copy)
+
+        # Scene copy handler
+        self._scene_copy = SceneCopyComponent(name="Scene_Copy")
+        self._session.set_scene_copy_handler(self._scene_copy)
 
     def _create_stop_solo_mute_modes(self):
         self._shift_button = self._elements.scene_launch_buttons_raw[7]
@@ -74,8 +80,10 @@ class Launchpad_Mini_MK3(NovationBase):
           (AddLayerMode(self._mixer, Layer(track_select_buttons=bottom_row))),
           cycle_mode_button_color="Mixer.TrackSelected")
         self._stop_solo_mute_modes.selected_mode = "launch"
-        # Configure shift button for copy-paste
+        # Configure shift button for clip copy (clip slots only)
         self._session.set_modifier_button(self._shift_button, "copy_shift", clip_slots_only=True)
+        # Configure shift button for scene copy (scenes only)
+        self._session.set_modifier_button(self._shift_button, "copy_shift", clip_slots_only=False)
         self._Launchpad_Mini_MK3__on_shift_button_value.subject = self._shift_button
         self._stop_solo_mute_modes.set_enabled(True)
 
@@ -127,6 +135,7 @@ class Launchpad_Mini_MK3(NovationBase):
 
     @listens("value")
     def __on_shift_button_value(self, value):
-        """Clear clipboard when shift button is released."""
+        """Clear both clipboards when shift button is released."""
         if not value:
             self._clip_copy.clear_clipboard()
+            self._scene_copy.clear_clipboard()
