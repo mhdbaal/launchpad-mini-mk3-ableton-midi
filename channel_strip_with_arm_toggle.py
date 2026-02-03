@@ -3,6 +3,7 @@
 from __future__ import absolute_import, print_function, unicode_literals
 from ableton.v2.base import listens, liveobj_valid
 from ableton.v2.control_surface.components import ChannelStripComponent
+from novation.colors import Rgb
 
 
 class ChannelStripComponentWithArmToggle(ChannelStripComponent):
@@ -66,7 +67,7 @@ class ChannelStripComponentWithArmToggle(ChannelStripComponent):
         Colors:
         - Selected + armed -> Red (Mixer.ArmOn)
         - Selected + not armed -> Green (DefaultButton.On)
-        - Not selected -> Off (DefaultButton.Off)
+        - Not selected -> Grey (Rgb.GREY)
         - Empty track slot -> Empty color
         """
         # Only update if select button is currently mapped/enabled
@@ -84,8 +85,8 @@ class ChannelStripComponentWithArmToggle(ChannelStripComponent):
                     # Selected but not armed -> Green (use default ON color)
                     self.select_button.color = "DefaultButton.On"
             else:
-                # Track not selected -> Off
-                self.select_button.color = "DefaultButton.Off"
+                # Track not selected -> Grey
+                self.select_button.color = Rgb.GREY
         else:
             # Empty track slot
             self.select_button.color = self.empty_color
