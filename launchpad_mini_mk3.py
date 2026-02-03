@@ -1,9 +1,4 @@
-# uncompyle6 version 3.9.1
-# Python bytecode version base 3.7.0 (3394)
-# Decompiled from: Python 3.12.2 (main, Feb  6 2024, 20:19:44) [Clang 15.0.0 (clang-1500.1.0.2.5)]
-# Embedded file name: output/Live/mac_universal_64_static/Release/python-bundle/MIDI Remote Scripts/Launchpad_Mini_MK3/launchpad_mini_mk3.py
-# Compiled at: 2024-03-09 01:30:22
-# Size of source mod 2**32: 5622 bytes
+# Launchpad Mini MK3 Control Surface Script - Based on 12.0.1 with select mode added
 from __future__ import absolute_import, print_function, unicode_literals
 from ableton.v2.base import listens
 from ableton.v2.control_surface import Layer
@@ -16,6 +11,7 @@ from . import sysex_ids as ids
 from .elements import Elements
 from .notifying_background import NotifyingBackgroundComponent
 from .skin import skin
+
 
 class Launchpad_Mini_MK3(NovationBase):
     model_family_code = ids.LP_MINI_MK3_FAMILY_CODE
@@ -49,7 +45,7 @@ class Launchpad_Mini_MK3(NovationBase):
           is_enabled=False,
           support_momentary_mode_cycling=False,
           layer=Layer(cycle_mode_button=(self._elements.scene_launch_buttons_raw[7])))
-        bottom_row = self._elements.clip_launch_matrix.submatrix[(None[:None], 7[:8])]
+        bottom_row = self._elements.clip_launch_matrix.submatrix[:, 7:8]
         self._stop_solo_mute_modes.add_mode("launch",
           None, cycle_mode_button_color="Mode.Launch.On")
         self._stop_solo_mute_modes.add_mode("stop",
@@ -61,6 +57,10 @@ class Launchpad_Mini_MK3(NovationBase):
         self._stop_solo_mute_modes.add_mode("mute",
           (AddLayerMode(self._mixer, Layer(mute_buttons=bottom_row))),
           cycle_mode_button_color="Mixer.MuteOff")
+        # NEW: Add select mode
+        self._stop_solo_mute_modes.add_mode("select",
+          (AddLayerMode(self._mixer, Layer(track_select_buttons=bottom_row))),
+          cycle_mode_button_color="Mixer.TrackSelected")
         self._stop_solo_mute_modes.selected_mode = "launch"
         self._stop_solo_mute_modes.set_enabled(True)
 
