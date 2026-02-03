@@ -62,6 +62,20 @@ else
     exit 1
 fi
 
+# Supprimer les logs Ableton
+LOG_FILE="/mnt/c/Users/mahed/AppData/Roaming/Ableton/Live 12.3/Preferences/Log.txt"
+if [ -f "$LOG_FILE" ]; then
+    echo -e "${YELLOW}Suppression des logs Ableton...${NC}"
+    rm "$LOG_FILE"
+    if [ $? -eq 0 ]; then
+        echo -e "${GREEN}✓ Logs supprimés${NC}"
+    else
+        echo -e "${RED}✗ Erreur lors de la suppression des logs${NC}"
+    fi
+else
+    echo -e "${YELLOW}⚠ Fichier de log non trouvé (pas d'erreur)${NC}"
+fi
+
 # Lister les fichiers copiés
 echo ""
 echo -e "${GREEN}Fichiers installés:${NC}"
