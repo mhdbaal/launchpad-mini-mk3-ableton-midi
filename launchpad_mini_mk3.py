@@ -1,4 +1,4 @@
-# Launchpad Mini MK3 Control Surface Script - Based on 12.0.1 with select mode and clip copy
+# Launchpad Mini MK3 Control Surface Script - Based on 12.0.1 with select mode, clip copy, and arm toggle
 from __future__ import absolute_import, print_function, unicode_literals
 from ableton.v2.base import listens
 from ableton.v2.control_surface import Layer
@@ -8,6 +8,7 @@ from novation import sysex
 from novation.novation_base import NovationBase
 from novation.session_modes import SessionModesComponent
 from . import sysex_ids as ids
+from .channel_strip_with_arm_toggle import ChannelStripComponentWithArmToggle
 from .clip_copy_component import ClipCopyComponent
 from .elements import Elements
 from .notifying_background import NotifyingBackgroundComponent
@@ -19,6 +20,7 @@ class Launchpad_Mini_MK3(NovationBase):
     model_family_code = ids.LP_MINI_MK3_FAMILY_CODE
     element_class = Elements
     session_class = SessionComponentWithCopy
+    channel_strip_class = ChannelStripComponentWithArmToggle
     skin = skin
 
     def __init__(self, *a, **k):
