@@ -1,0 +1,37 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create release zip
+        run: |
+          mkdir -p Launchpad_Mini_MK3
+          cp *.py README.md Launchpad_Mini_MK3/
+          zip -r Launchpad_Mini_MK3_${{ github.ref_name }}.zip Launchpad_Mini_MK3/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: Launchpad_Mini_MK3_${{ github.ref_name }}.zip
+          generate_release_notes: true
+          body: |
+            ## Installation
+
+            1. Download the `Launchpad_Mini_MK3_${{ github.ref_name }}.zip` file
+            2. Extract the `Launchpad_Mini_MK3` folder
+            3. Copy it to your Ableton Live MIDI Remote Scripts directory:
+               - **Windows:** `C:\ProgramData\Ableton\Live 12 Suite\Resources\MIDI Remote Scripts\`
+               - **macOS:** `/Applications/Ableton Live 12 Suite.app/Contents/App-Resources/MIDI Remote Scripts/`
+            4. Restart Ableton Live
+            5. Go to **Settings → Link, Tempo & MIDI** and select **Launchpad Mini MK3** as a Control Surface
