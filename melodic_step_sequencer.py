@@ -9,67 +9,64 @@ from ableton.v2.control_surface.input_control_element import ScriptForwarding
 
 
 STEP_LENGTH = 0.25
-STEPS_PER_PAGE = 32
+STEPS_PER_PAGE = 8
 PAGE_LENGTH = STEP_LENGTH * STEPS_PER_PAGE
 DEFAULT_VELOCITY = 100
-DEFAULT_CLIP_PAGES = 1
-BOTTOM_RIGHT_SIZE = 16
-NOTE_SELECTOR_BASE_PITCH = 36
-MIN_PITCH_OFFSET = -36
-MAX_PITCH_OFFSET = 76
+DEFAULT_CLIP_PAGES = 8
 PROGRAMMER_LED_CHANNEL = 0
-PLAY_CHANNEL = 0
 DOUBLE_TAP_SECONDS = 0.35
-DRUM_SEQUENCER_COLOR_VALUES = {
+BASE_PITCH = 60
+MIN_PITCH_OFFSET = -60
+MAX_PITCH_OFFSET = 60
+PREVIEW_TOGGLE_X = 7
+PREVIEW_TOGGLE_Y = 7
+MAJOR_SCALE = (0, 2, 4, 5, 7, 9, 11)
+MINOR_SCALE = (0, 2, 3, 5, 7, 8, 10)
+
+MELODIC_COLOR_VALUES = {
     "DefaultButton.Disabled": 0,
-    "DrumSequencer.StepEmpty": 51,
-    "DrumSequencer.StepBeat": 43,
-    "DrumSequencer.StepActive": 29,
-    "DrumSequencer.StepMuted": 84,
-    "DrumSequencer.Playhead": 21,
-    "DrumSequencer.PlayheadActive": 3,
-    "DrumSequencer.NoDrumRack": 7,
-    "DrumSequencer.NoClip": 1,
-    "DrumSequencer.NoteEmpty": 1,
-    "DrumSequencer.NoteFilled": 43,
-    "DrumSequencer.NoteSelected": 96,
-    "DrumSequencer.Loop.Outside": 1,
-    "DrumSequencer.Loop.Inside": 43,
-    "DrumSequencer.Loop.Selected": 96,
-    "DrumSequencer.Loop.Playhead": 21,
-    "DrumSequencer.Loop.RangeEdit": 1,
-    "DrumSequencer.Control.Page": 43,
-    "DrumSequencer.Control.Octave": 21,
-    "DrumSequencer.Control.Semitone": 29,
-    "DrumSequencer.Control.Reset": 84,
-    "DrumSequencer.Control.Shift": 96,
+    "MelodicSequencer.StepEmpty": 51,
+    "MelodicSequencer.StepBeat": 43,
+    "MelodicSequencer.StepActive": 29,
+    "MelodicSequencer.Root": 96,
+    "MelodicSequencer.Playhead": 21,
+    "MelodicSequencer.PlayheadActive": 3,
+    "MelodicSequencer.NoClip": 1,
+    "MelodicSequencer.Loop.Outside": 1,
+    "MelodicSequencer.Loop.Inside": 43,
+    "MelodicSequencer.Loop.Selected": 96,
+    "MelodicSequencer.Loop.Playhead": 21,
+    "MelodicSequencer.Loop.RangeEdit": 1,
+    "MelodicSequencer.Preview.Off": 41,
+    "MelodicSequencer.Preview.On": 96,
+    "MelodicSequencer.Control.Page": 43,
+    "MelodicSequencer.Control.Octave": 21,
+    "MelodicSequencer.Control.Semitone": 29,
+    "MelodicSequencer.Control.Reset": 84,
+    "MelodicSequencer.Control.Shift": 96,
 }
 
 
-class DrumStepSequencerComponent(Component):
-    """Small Push-style drum sequencer for the Launchpad Mini MK3 grid."""
+class MelodicStepSequencerComponent(Component):
+    """Launchpad95-style melodic step sequencer: 7 pitch rows + 1 page row."""
 
-    def __init__(self, drum_group_component=None, *a, **k):
-        super(DrumStepSequencerComponent, self).__init__(*a, **k)
-        self._drum_group = drum_group_component
-        self._step_matrix = None
-        self._loop_matrix = None
-        self._note_matrix = None
+    def __init__(self, *a, **k):
+        super(MelodicStepSequencerComponent, self).__init__(*a, **k)
         self._grid_matrix = None
         self._clip = None
         self._clip_slot = None
-        self._drum_group_device = None
-        self._selected_pitch = 36
+        self._notes = []
         self._page_index = 0
+        self._loop_press_points = []
+        self._loop_range_active = False
+        self._last_page_tap = (-1, 0)
+        self._held_grid_buttons = set()
+        self._preview_mode = False
         self._pitch_offset = 0
         self._control_buttons = ()
         self._control_button_listeners = []
         self._shift_pressed = False
-        self._loop_press_points = []
-        self._loop_range_active = False
-        self._last_page_tap = (-1, 0)
         self._playhead = None
-        self._notes = []
         self._led_debug_count = 0
         self._delayed_update_task = self._tasks.add(task.sequence(task.wait(0.1), task.run(self.update)))
         self._delayed_update_task.kill()
@@ -79,10 +76,8 @@ class DrumStepSequencerComponent(Component):
     def disconnect(self):
         self.set_control_buttons(None)
         self.set_grid_matrix(None)
-        self.set_note_matrix(None)
         self._set_clip(None)
-        self._set_drum_group_device(None)
-        super(DrumStepSequencerComponent, self).disconnect()
+        super(MelodicStepSequencerComponent, self).disconnect()
 
     def set_control_buttons(self, buttons):
         if self._control_buttons:
@@ -103,48 +98,37 @@ class DrumStepSequencerComponent(Component):
         if matrix != self._grid_matrix:
             if self._grid_matrix is not None:
                 self._grid_matrix.remove_value_listener(self._on_grid_matrix_value)
+                self._clear_audition_translations()
             self._grid_matrix = matrix
             if self._grid_matrix is not None:
                 self._grid_matrix.add_value_listener(self._on_grid_matrix_value)
-            self._step_matrix = matrix.submatrix[:, :4] if matrix is not None else None
-            self._note_matrix = matrix.submatrix[:4, 4:8] if matrix is not None else None
-            self._loop_matrix = matrix.submatrix[4:8, 4:8] if matrix is not None else None
             self._request_midi_map_rebuild()
             self._log("grid matrix set: {}x{}".format(matrix.width(), matrix.height()) if matrix is not None else "grid matrix cleared")
-            self._update_audition_translations()
-            self.update()
-
-    def set_note_matrix(self, matrix):
-        if matrix != self._note_matrix:
-            if self._note_matrix is not None:
-                self._note_matrix.remove_value_listener(self._on_note_matrix_value)
-            self._note_matrix = matrix
-            if self._note_matrix is not None:
-                self._note_matrix.add_value_listener(self._on_note_matrix_value)
             self.update()
 
     def set_enabled(self, enabled):
-        super(DrumStepSequencerComponent, self).set_enabled(enabled)
+        super(MelodicStepSequencerComponent, self).set_enabled(enabled)
         self._log("enabled: {}".format(enabled))
         if enabled:
             self._led_debug_count = 0
-            self._refresh_targets()
-            self._update_audition_translations()
+            self._clear_audition_translations()
+            self._refresh_clip()
             self._delayed_update_task.restart()
             self._update_control_leds()
         else:
             self._delayed_update_task.kill()
             self._playhead = None
+            self._held_grid_buttons = set()
+            self._preview_mode = False
             self._shift_pressed = False
-            self._turn_matrices_off()
+            self._turn_grid_off()
             self._clear_audition_translations()
             self._turn_control_buttons_off()
 
     def update(self):
-        super(DrumStepSequencerComponent, self).update()
+        super(MelodicStepSequencerComponent, self).update()
         if self.is_enabled():
-            self._update_step_leds()
-            self._update_note_leds()
+            self._update_pitch_leds()
             self._update_loop_leds()
             self._update_control_leds()
 
@@ -156,19 +140,7 @@ class DrumStepSequencerComponent(Component):
     @listens("selected_track")
     def _on_selected_track_changed(self):
         if self.is_enabled():
-            self._refresh_targets()
-
-    @listens("selected_drum_pad")
-    def _on_selected_drum_pad_changed(self):
-        drum_group = self._drum_group_device
-        if liveobj_valid(drum_group):
-            selected_pad = drum_group.view.selected_drum_pad
-            if liveobj_valid(selected_pad):
-                self._selected_pitch = selected_pad.note
-        elif self._selected_pitch is None:
-            self._selected_pitch = NOTE_SELECTOR_BASE_PITCH
-        self._refresh_notes()
-        self.update()
+            self._refresh_clip()
 
     @listens("notes")
     def _on_clip_notes_changed(self):
@@ -183,7 +155,7 @@ class DrumStepSequencerComponent(Component):
                 self._playhead = self._clip.playing_position
             else:
                 self._playhead = None
-            self._update_step_leds()
+            self._update_pitch_leds()
             self._update_loop_leds()
 
     @listens("playing_status")
@@ -199,15 +171,6 @@ class DrumStepSequencerComponent(Component):
     def _on_loop_end_changed(self):
         self._on_loop_changed()
 
-    def _refresh_targets(self):
-        track = self.song.view.selected_track
-        drum_group = self._find_drum_group_device(track)
-        self._log("target track: {}, drum group: {}".format(getattr(track, "name", "<none>"), getattr(drum_group, "name", "<none>")))
-        self._set_drum_group_device(drum_group)
-        self._refresh_clip()
-        self._update_audition_translations()
-        self.update()
-
     def _refresh_clip(self):
         clip_slot = self._selected_clip_slot()
         clip = None
@@ -218,6 +181,7 @@ class DrumStepSequencerComponent(Component):
             clip = clip_slot.clip
         self._clip_slot = clip_slot
         self._set_clip(clip)
+        self.update()
 
     def _set_clip(self, clip):
         if clip != self._clip:
@@ -229,58 +193,26 @@ class DrumStepSequencerComponent(Component):
             self._on_loop_end_changed.subject = clip
         self._refresh_notes()
 
-    def _set_drum_group_device(self, drum_group):
-        self._drum_group_device = drum_group
-        if self._drum_group is not None:
-            self._drum_group.set_drum_group_device(drum_group)
-        self._on_selected_drum_pad_changed.subject = drum_group.view if liveobj_valid(drum_group) else None
-        if liveobj_valid(drum_group):
-            selected_pad = drum_group.view.selected_drum_pad
-            if liveobj_valid(selected_pad):
-                self._selected_pitch = selected_pad.note
-
     def _selected_clip_slot(self):
         slot = self.song.view.highlighted_clip_slot
         return slot if slot is not None else None
-
-    def _find_drum_group_device(self, track):
-        if not liveobj_valid(track):
-            return None
-        for device in track.devices:
-            drum_group = self._find_drum_group_device_in_device(device)
-            if liveobj_valid(drum_group):
-                return drum_group
-        return None
-
-    def _find_drum_group_device_in_device(self, device):
-        if not liveobj_valid(device):
-            return None
-        if getattr(device, "can_have_drum_pads", False):
-            return device
-        if getattr(device, "can_have_chains", False):
-            for chain in device.chains:
-                for nested_device in chain.devices:
-                    drum_group = self._find_drum_group_device_in_device(nested_device)
-                    if liveobj_valid(drum_group):
-                        return drum_group
-        return None
 
     def _ensure_clip(self):
         if liveobj_valid(self._clip) and self._clip.is_midi_clip:
             return True
         slot = self._selected_clip_slot()
         if slot is None:
-            self._show_message("Drum Sequencer: select a MIDI clip slot")
+            self._show_message("Melodic Sequencer: select a MIDI clip slot")
             return False
         if slot.has_clip:
             if slot.clip.is_midi_clip:
                 self.song.view.detail_clip = slot.clip
                 self._set_clip(slot.clip)
                 return True
-            self._show_message("Drum Sequencer: selected clip is not MIDI")
+            self._show_message("Melodic Sequencer: selected clip is not MIDI")
             return False
         if not self._selected_track_can_hold_midi():
-            self._show_message("Drum Sequencer: select a MIDI track")
+            self._show_message("Melodic Sequencer: select a MIDI track")
             return False
         try:
             slot.create_clip(PAGE_LENGTH * DEFAULT_CLIP_PAGES)
@@ -293,7 +225,7 @@ class DrumStepSequencerComponent(Component):
 
     def _refresh_notes(self):
         if liveobj_valid(self._clip):
-            loop_end = max(self._clip.loop_end, PAGE_LENGTH * BOTTOM_RIGHT_SIZE)
+            loop_end = max(self._clip.loop_end, PAGE_LENGTH * DEFAULT_CLIP_PAGES)
             self._notes = list(self._clip.get_notes_extended(from_time=0,
               from_pitch=0,
               time_span=loop_end,
@@ -304,45 +236,37 @@ class DrumStepSequencerComponent(Component):
     def _on_grid_matrix_value(self, value, x, y, is_momentary):
         if not self.is_enabled():
             return
-        if y >= 4 and x >= 4:
-            self._handle_loop_press((y - 4) * 4 + (x - 4), bool(value))
+        if y == 7:
+            if x == PREVIEW_TOGGLE_X:
+                if value:
+                    self._toggle_preview_mode()
+                return
+            self._handle_loop_press(x, bool(value))
+            return
+        if self._preview_mode:
             return
         if not value:
+            self._held_grid_buttons.discard((x, y))
             return
-        self._log("grid pressed: {},{}".format(x, y))
-        if y < 4:
-            step = y * 8 + x
-            self._log("step pressed: {}".format(step))
-            if self._ensure_clip():
-                self._toggle_step(step)
-        elif x < 4:
-            self._select_note_by_grid_position(x, y)
-
-    def _on_note_matrix_value(self, value, x, y, is_momentary):
-        if self.is_enabled() and value and self._note_matrix is not None:
-            self._select_note_by_grid_position(x, y + 4)
-
-    def _select_note_by_grid_position(self, x, y):
-        self._selected_pitch = self._pitch_for_note_button(x, y - 4)
-        self._log("note selected: {}".format(self._selected_pitch))
-        if liveobj_valid(self._drum_group_device):
-            pad = self._drum_pad_for_pitch(self._selected_pitch)
-            if liveobj_valid(pad):
-                self._drum_group_device.view.selected_drum_pad = pad
-        self._refresh_notes()
-        self.update()
+        if (x, y) in self._held_grid_buttons:
+            return
+        self._held_grid_buttons.add((x, y))
+        pitch = self._pitch_for_row(y)
+        step = self._page_index * STEPS_PER_PAGE + x
+        self._log("grid pressed: {},{} pitch={} step={}".format(x, y, pitch, step))
+        if self._ensure_clip():
+            self._toggle_note(step, pitch)
 
     def _handle_loop_press(self, index, pressed):
         if pressed:
             if index not in self._loop_press_points:
                 self._loop_press_points.append(index)
-            self._log("loop pressed: {}".format(index))
             if len(self._loop_press_points) >= 2:
                 start = min(self._loop_press_points)
                 end = max(self._loop_press_points) + 1
                 self._set_loop_pages(start, end)
                 self._loop_range_active = True
-                self._show_message("Drum pages {}-{} scoped".format(start + 1, end))
+                self._show_message("Melodic pages {}-{} scoped".format(start + 1, end))
             self._update_loop_leds()
         else:
             was_range_active = self._loop_range_active
@@ -361,34 +285,16 @@ class DrumStepSequencerComponent(Component):
                     self._select_page(index)
             self.update()
 
-    def _pitch_for_note_button(self, x, y):
-        index = (4 - y - 1) * 4 + x
-        if liveobj_valid(self._drum_group_device) and self._pitch_offset == 0:
-            visible_pads = self._drum_group_device.visible_drum_pads
-            if visible_pads and index < len(visible_pads):
-                pad = visible_pads[index]
-                if liveobj_valid(pad):
-                    return pad.note
-        return max(0, min(127, NOTE_SELECTOR_BASE_PITCH + self._pitch_offset + index))
-
-    def _drum_pad_for_pitch(self, pitch):
-        if liveobj_valid(self._drum_group_device):
-            for pad in self._drum_group_device.drum_pads:
-                if pad.note == pitch:
-                    return pad
-        return None
-
-    def _toggle_step(self, step):
-        if self._selected_pitch is None:
-            self._selected_pitch = NOTE_SELECTOR_BASE_PITCH
-        start = self._time_for_step(step)
-        if self._step_has_note(step):
+    def _toggle_note(self, step, pitch):
+        start = step * STEP_LENGTH
+        if self._step_has_pitch(step, pitch):
             self._clip.remove_notes_extended(from_time=start,
-              from_pitch=self._selected_pitch,
+              from_pitch=pitch,
               time_span=STEP_LENGTH,
               pitch_span=1)
+            self._log("note removed: pitch={} start={}".format(pitch, start))
         else:
-            note = Live.Clip.MidiNoteSpecification(pitch=self._selected_pitch,
+            note = Live.Clip.MidiNoteSpecification(pitch=pitch,
               start_time=start,
               duration=STEP_LENGTH,
               velocity=DEFAULT_VELOCITY,
@@ -396,26 +302,16 @@ class DrumStepSequencerComponent(Component):
             self._clip.add_new_notes((note,))
             self._clip.deselect_all_notes()
             self._ensure_loop_contains_time(start + STEP_LENGTH)
+            self._log("note added: pitch={} start={}".format(pitch, start))
         self._refresh_notes()
         self.update()
 
-    def _time_for_step(self, step):
-        return self._page_index * PAGE_LENGTH + step * STEP_LENGTH
-
-    def _step_has_note(self, step):
-        start = self._time_for_step(step)
+    def _step_has_pitch(self, step, pitch):
+        start = step * STEP_LENGTH
         end = start + STEP_LENGTH
         for note in self._notes:
-            if note.pitch == self._selected_pitch and start <= note.start_time < end:
+            if note.pitch == pitch and start <= note.start_time < end:
                 return True
-        return False
-
-    def _step_note_muted(self, step):
-        start = self._time_for_step(step)
-        end = start + STEP_LENGTH
-        for note in self._notes:
-            if note.pitch == self._selected_pitch and start <= note.start_time < end:
-                return note.mute
         return False
 
     def _set_loop_pages(self, start_page, end_page):
@@ -427,7 +323,7 @@ class DrumStepSequencerComponent(Component):
         if self._ensure_clip():
             self._page_index = page
             self._set_clip_loop(page * PAGE_LENGTH, (page + 1) * PAGE_LENGTH)
-            self._show_message("Drum page {} scoped".format(page + 1))
+            self._show_message("Melodic page {} scoped".format(page + 1))
 
     def _is_page_double_tap(self, page):
         now = time.time()
@@ -455,60 +351,68 @@ class DrumStepSequencerComponent(Component):
         self._clip.start_marker = start
         self._clip.end_marker = end
 
-    def _update_step_leds(self):
+    def _pitch_for_row(self, y):
+        scale = self._current_scale()
+        degree = 6 - y
+        root = self._root_pitch()
+        return root + scale[degree % len(scale)] + 12 * int(degree / len(scale))
+
+    def _current_scale(self):
+        scale_name = getattr(self.song, "scale_name", "") or ""
+        return MINOR_SCALE if "Minor" in scale_name or "minor" in scale_name else MAJOR_SCALE
+
+    def _root_pitch(self):
+        root_note = getattr(self.song, "root_note", 0) or 0
+        return BASE_PITCH + int(root_note) + self._pitch_offset
+
+    def _update_pitch_leds(self):
         if self._grid_matrix is None:
             return
-        for y in range(4):
+        for y in range(7):
+            pitch = self._pitch_for_row(y)
             for x in range(8):
-                self._set_grid_light(x, y, self._step_color(y * 8 + x))
+                step = self._page_index * STEPS_PER_PAGE + x
+                self._set_grid_light(x, y, self._pitch_color(step, pitch, x))
 
-    def _step_color(self, step):
-        color = "DrumSequencer.NoClip"
-        if liveobj_valid(self._clip) or self._selected_track_can_hold_midi():
-            color = "DrumSequencer.StepBeat" if step % 4 == 0 else "DrumSequencer.StepEmpty"
-            if self._step_has_note(step):
-                color = "DrumSequencer.StepMuted" if self._step_note_muted(step) else "DrumSequencer.StepActive"
-            if self._playhead_is_on_step(step):
-                color = "DrumSequencer.PlayheadActive" if self._step_has_note(step) else "DrumSequencer.Playhead"
+    def _pitch_color(self, step, pitch, x):
+        if not liveobj_valid(self._clip) and not self._selected_track_can_hold_midi():
+            return "MelodicSequencer.NoClip"
+        color = "MelodicSequencer.StepBeat" if x == 0 or x == 4 else "MelodicSequencer.StepEmpty"
+        if pitch % 12 == self._root_pitch() % 12:
+            color = "MelodicSequencer.Root"
+        if self._step_has_pitch(step, pitch):
+            color = "MelodicSequencer.StepActive"
+        if self._playhead_is_on_step(step):
+            color = "MelodicSequencer.PlayheadActive" if self._step_has_pitch(step, pitch) else "MelodicSequencer.Playhead"
         return color
-
-    def _update_note_leds(self):
-        if self._grid_matrix is None:
-            return
-        for y in range(4):
-            for x in range(4):
-                pitch = self._pitch_for_note_button(x, y)
-                color = "DrumSequencer.NoteSelected" if pitch == self._selected_pitch else "DrumSequencer.NoteEmpty"
-                if color != "DrumSequencer.NoteSelected" and self._has_any_note_for_pitch(pitch):
-                    color = "DrumSequencer.NoteFilled"
-                self._set_grid_light(x, y + 4, color)
 
     def _update_loop_leds(self):
         if self._grid_matrix is None:
             return
-        for y in range(4):
-            for x in range(4):
-                self._set_grid_light(x + 4, y + 4, self._loop_color(y * 4 + x))
+        for x in range(8):
+            self._set_grid_light(x, 7, self._loop_color(x))
 
     def _loop_color(self, index):
+        if index == PREVIEW_TOGGLE_X:
+            return "MelodicSequencer.Preview.On" if self._preview_mode else "MelodicSequencer.Preview.Off"
         if not liveobj_valid(self._clip) and not self._selected_track_can_hold_midi():
-            return "DrumSequencer.NoClip"
+            return "MelodicSequencer.NoClip"
         if index in self._loop_press_points:
-            return "DrumSequencer.Loop.RangeEdit"
+            return "MelodicSequencer.Loop.RangeEdit"
         if self._playhead_is_on_page(index):
-            return "DrumSequencer.Loop.Playhead"
+            return "MelodicSequencer.Loop.Playhead"
         if index == self._page_index:
-            return "DrumSequencer.Loop.Selected"
+            return "MelodicSequencer.Loop.Selected"
         if liveobj_valid(self._clip):
             start = index * PAGE_LENGTH
             if self._clip.loop_start <= start < self._clip.loop_end:
-                return "DrumSequencer.Loop.Inside"
-        return "DrumSequencer.Loop.Outside"
+                return "MelodicSequencer.Loop.Inside"
+        return "MelodicSequencer.Loop.Outside"
 
     def _playhead_is_on_step(self, step):
         if self._playhead is None:
             return False
-        start = self._time_for_step(step)
+        start = step * STEP_LENGTH
         return start <= self._playhead < start + STEP_LENGTH
 
     def _playhead_is_on_page(self, page):
@@ -516,20 +420,6 @@ class DrumStepSequencerComponent(Component):
             return False
         start = page * PAGE_LENGTH
         return start <= self._playhead < start + PAGE_LENGTH
-
-    def _has_any_note_for_pitch(self, pitch):
-        for note in self._notes:
-            if note.pitch == pitch:
-                return True
-        return False
-
-    def _update_audition_translations(self):
-        if self._grid_matrix is None or not self.is_enabled():
-            return
-        for y in range(4):
-            for x in range(4):
-                self._translate_button_for_audition(x, y + 4, self._pitch_for_note_button(x, y))
-        self._request_midi_map_rebuild()
 
     def _clear_audition_translations(self):
         if self._grid_matrix is None:
@@ -542,12 +432,29 @@ class DrumStepSequencerComponent(Component):
                     button.script_forwarding = ScriptForwarding.exclusive
         self._request_midi_map_rebuild()
 
-    def _translate_button_for_audition(self, x, y, pitch):
-        button = self._get_grid_button(x, y)
-        if button is not None:
-            button.set_identifier(pitch)
-            button.set_channel(PLAY_CHANNEL)
-            button.script_forwarding = ScriptForwarding.non_consuming
+    def _toggle_preview_mode(self):
+        self._preview_mode = not self._preview_mode
+        self._held_grid_buttons = set()
+        if self._preview_mode:
+            self._update_audition_translations()
+            self._show_message("Melodic Sequencer: preview")
+        else:
+            self._clear_audition_translations()
+            self._show_message("Melodic Sequencer: piano roll")
+        self.update()
+
+    def _update_audition_translations(self):
+        if self._grid_matrix is None or not self.is_enabled():
+            return
+        for y in range(7):
+            pitch = self._pitch_for_row(y)
+            for x in range(8):
+                button = self._get_grid_button(x, y)
+                if button is not None:
+                    button.set_identifier(pitch)
+                    button.set_channel(0)
+                    button.script_forwarding = ScriptForwarding.non_consuming
+        self._request_midi_map_rebuild()
 
     def _make_control_button_listener(self, index):
         def listener(value):
@@ -581,10 +488,10 @@ class DrumStepSequencerComponent(Component):
             self._set_pitch_offset(0)
 
     def _adjust_page(self, delta):
-        self._page_index = max(0, min(BOTTOM_RIGHT_SIZE - 1, self._page_index + delta))
+        self._page_index = max(0, min(DEFAULT_CLIP_PAGES - 1, self._page_index + delta))
         if liveobj_valid(self._clip):
             self._select_page(self._page_index)
-        self._show_message("Drum page {}".format(self._page_index + 1))
+        self._show_message("Melodic page {}".format(self._page_index + 1))
         self.update()
 
     def _adjust_pitch_offset(self, delta):
@@ -592,28 +499,28 @@ class DrumStepSequencerComponent(Component):
 
     def _set_pitch_offset(self, offset):
         self._pitch_offset = max(MIN_PITCH_OFFSET, min(MAX_PITCH_OFFSET, offset))
-        self._selected_pitch = self._pitch_for_note_button(0, 3)
-        self._update_audition_translations()
+        if self._preview_mode:
+            self._update_audition_translations()
         self._show_navigation_message()
         self.update()
 
     def _show_navigation_message(self):
         octave = int(self._pitch_offset / 12)
         semitone = self._pitch_offset - octave * 12
-        self._show_message("Drum page {} | octave {:+d} | semitone {:+d}".format(self._page_index + 1, octave, semitone))
+        self._show_message("Melodic page {} | octave {:+d} | semitone {:+d}".format(self._page_index + 1, octave, semitone))
 
     def _update_control_leds(self):
         if not self._control_buttons:
             return
         colors = (
-          "DrumSequencer.Control.Page",
-          "DrumSequencer.Control.Page",
-          "DrumSequencer.Control.Octave",
-          "DrumSequencer.Control.Octave",
-          "DrumSequencer.Control.Semitone",
-          "DrumSequencer.Control.Semitone",
-          "DrumSequencer.Control.Reset",
-          "DrumSequencer.Control.Shift")
+          "MelodicSequencer.Control.Page",
+          "MelodicSequencer.Control.Page",
+          "MelodicSequencer.Control.Octave",
+          "MelodicSequencer.Control.Octave",
+          "MelodicSequencer.Control.Semitone",
+          "MelodicSequencer.Control.Semitone",
+          "MelodicSequencer.Control.Reset",
+          "MelodicSequencer.Control.Shift")
         for index, button in enumerate(self._control_buttons):
             try:
                 button.set_light(colors[index] if self.is_enabled() else "DefaultButton.Disabled")
@@ -631,7 +538,7 @@ class DrumStepSequencerComponent(Component):
         track = self.song.view.selected_track
         return liveobj_valid(track) and getattr(track, "has_midi_input", True)
 
-    def _turn_matrices_off(self):
+    def _turn_grid_off(self):
         if self._grid_matrix is not None:
             for y in range(8):
                 for x in range(8):
@@ -650,7 +557,7 @@ class DrumStepSequencerComponent(Component):
 
     def _log(self, message):
         try:
-            self.canonical_parent._c_instance.log_message("[DrumStepSequencer] {}".format(message))
+            self.canonical_parent._c_instance.log_message("[MelodicStepSequencer] {}".format(message))
         except Exception:
             pass
 
@@ -667,7 +574,7 @@ class DrumStepSequencerComponent(Component):
             pass
 
     def _send_programmer_pad_color(self, button, color):
-        color_value = DRUM_SEQUENCER_COLOR_VALUES.get(color, 0)
+        color_value = MELODIC_COLOR_VALUES.get(color, 0)
         note = button.original_identifier()
         status = 144 + PROGRAMMER_LED_CHANNEL
         try:

@@ -40,6 +40,40 @@ class Colors(object):
             Playhead = Rgb.GREEN
             RangeEdit = Rgb.WHITE_HALF
 
+        class Control(object):
+            Page = Rgb.BLUE_HALF
+            Octave = Rgb.GREEN_HALF
+            Semitone = Rgb.MINT
+            Reset = Rgb.DARK_ORANGE
+            Shift = Rgb.AMBER
+
+    class MelodicSequencer(object):
+        StepEmpty = Rgb.DARK_BLUE_HALF
+        StepBeat = Rgb.BLUE_HALF
+        StepActive = Rgb.MINT
+        Root = Rgb.AMBER
+        Playhead = Rgb.GREEN
+        PlayheadActive = Rgb.WHITE
+        NoClip = Rgb.DARK_GREY
+
+        class Preview(object):
+            Off = Rgb.GREEN_HALF
+            On = Rgb.AMBER
+
+        class Loop(object):
+            Outside = Rgb.DARK_GREY
+            Inside = Rgb.BLUE_HALF
+            Selected = Rgb.AMBER
+            Playhead = Rgb.GREEN
+            RangeEdit = Rgb.WHITE_HALF
+
+        class Control(object):
+            Page = Rgb.BLUE_HALF
+            Octave = Rgb.GREEN_HALF
+            Semitone = Rgb.MINT
+            Reset = Rgb.DARK_ORANGE
+            Shift = Rgb.AMBER
+
 
 # IMPORTANT: Merge with base_skin instead of redefining everything!
 skin = merge_skins(base_skin, Skin(Colors))

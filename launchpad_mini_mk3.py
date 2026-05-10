@@ -11,6 +11,7 @@ from . import sysex_ids as ids
 from .channel_strip_with_arm_toggle import ChannelStripComponentWithArmToggle
 from .clip_copy_component import ClipCopyComponent
 from .drum_step_sequencer import DrumStepSequencerComponent
+from .melodic_step_sequencer import MelodicStepSequencerComponent
 from .scene_copy_component import SceneCopyComponent
 from .elements import Elements
 from .notifying_background import NotifyingBackgroundComponent
@@ -36,6 +37,7 @@ USER_BUTTON_CC = 98
 LED_OFF = 0
 LED_SESSION = 21
 LED_SEQUENCER = 96
+LED_MELODIC = 41
 
 
 class Launchpad_Mini_MK3(NovationBase):
@@ -70,6 +72,7 @@ class Launchpad_Mini_MK3(NovationBase):
         self._create_stop_solo_mute_modes()
         self._create_session_modes()
         self._create_drum_sequencer()
+        self._create_melodic_sequencer()
         self._create_main_modes()
         self._Launchpad_Mini_MK3__on_layout_switch_value.subject = self._elements.layout_switch
         self._Launchpad_Mini_MK3__on_selected_track_changed.subject = self.song.view
@@ -146,6 +149,13 @@ class Launchpad_Mini_MK3(NovationBase):
           is_enabled=False,
           drum_group_component=self._drum_group,
           layer=Layer(grid_matrix="clip_launch_matrix"))
+        self._drum_step_sequencer.set_control_buttons(self._elements.scene_launch_buttons_raw)
+
+    def _create_melodic_sequencer(self):
+        self._melodic_step_sequencer = MelodicStepSequencerComponent(name="Melodic_Step_Sequencer",
+          is_enabled=False,
+          layer=Layer(grid_matrix="clip_launch_matrix"))
+        self._melodic_step_sequencer.set_control_buttons(self._elements.scene_launch_buttons_raw)
 
     def _create_main_modes(self):
         self._main_modes = ModesComponent(name="Main_Modes",
@@ -157,6 +167,8 @@ class Launchpad_Mini_MK3(NovationBase):
           cycle_mode_button_color="DefaultButton.Off")
         self._main_modes.add_mode("drum_sequence", None,
           cycle_mode_button_color="DrumSequencer.StepActive")
+        self._main_modes.add_mode("melodic_sequence", None,
+          cycle_mode_button_color="MelodicSequencer.StepActive")
         self._main_modes.selected_mode = "session"
         self._Launchpad_Mini_MK3__on_main_mode_changed.subject = self._main_modes
         self._main_modes.set_enabled(True)
@@ -173,27 +185,41 @@ class Launchpad_Mini_MK3(NovationBase):
     @listens("selected_mode")
     def __on_main_mode_changed(self, mode):
         drum_mode = mode == "drum_sequence"
+        melodic_mode = mode == "melodic_sequence"
+        sequencer_mode = drum_mode or melodic_mode
         self._log("main mode changed: {}".format(mode))
-        if drum_mode:
+        if sequencer_mode:
             self._set_session_components_enabled(False)
+            if drum_mode:
+                self._melodic_step_sequencer.set_enabled(False)
+            else:
+                self._drum_step_sequencer.set_enabled(False)
             self._restore_clip_launch_matrix()
-            self._drum_step_sequencer.set_enabled(True)
+            if drum_mode:
+                self._drum_step_sequencer.set_enabled(True)
+            else:
+                self._melodic_step_sequencer.set_enabled(True)
             self.set_controlled_track(self.song.view.selected_track)
             self._request_midi_map_rebuild()
-            self._set_mode_button_lights(True)
-            self.show_message("Launchpad Mini MK3: Drum Sequencer")
-            self._drum_step_sequencer.update()
+            self._set_mode_button_lights(mode)
+            if drum_mode:
+                self.show_message("Launchpad Mini MK3: Drum Sequencer")
+                self._drum_step_sequencer.update()
+            else:
+                self.show_message("Launchpad Mini MK3: Melodic Sequencer")
+                self._melodic_step_sequencer.update()
         else:
             self._drum_step_sequencer.set_enabled(False)
+            self._melodic_step_sequencer.set_enabled(False)
             self._restore_clip_launch_matrix()
             self.release_controlled_track()
             self._set_session_components_enabled(True)
             self._request_midi_map_rebuild()
-            self._set_mode_button_lights(False)
+            self._set_mode_button_lights(mode)
 
     @listens("selected_track")
     def __on_selected_track_changed(self):
-        if hasattr(self, "_main_modes") and self._main_modes.selected_mode == "drum_sequence":
+        if hasattr(self, "_main_modes") and self._main_modes.selected_mode in ("drum_sequence", "melodic_sequence"):
             self.set_controlled_track(self.song.view.selected_track)
 
     @listens("selected_mode")
@@ -259,12 +285,17 @@ class Launchpad_Mini_MK3(NovationBase):
         except Exception:
             pass
 
-    def _set_mode_button_lights(self, drum_sequence_active):
-        if drum_sequence_active:
+    def _set_mode_button_lights(self, mode):
+        if mode == "drum_sequence":
             self._send_programmer_cc(SESSION_BUTTON_CC, LED_OFF)
             self._send_programmer_cc(DRUMS_BUTTON_CC, LED_OFF)
             self._send_programmer_cc(KEYS_BUTTON_CC, LED_OFF)
             self._send_programmer_cc(USER_BUTTON_CC, LED_SEQUENCER)
+        elif mode == "melodic_sequence":
+            self._send_programmer_cc(SESSION_BUTTON_CC, LED_OFF)
+            self._send_programmer_cc(DRUMS_BUTTON_CC, LED_OFF)
+            self._send_programmer_cc(KEYS_BUTTON_CC, LED_OFF)
+            self._send_programmer_cc(USER_BUTTON_CC, LED_MELODIC)
         else:
             self._send_programmer_cc(SESSION_BUTTON_CC, LED_SESSION)
             self._send_programmer_cc(DRUMS_BUTTON_CC, LED_OFF)
