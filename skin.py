@@ -17,7 +17,28 @@ class Colors(object):
 
     # NEW: Color for select mode
     class Mixer(object):
-        TrackSelected = Color((Rgb.AQUA.midi_value, Rgb.WHITE_HALF.midi_value))
+        TrackSelected = Rgb.AQUA
+
+    class DrumSequencer(object):
+        StepEmpty = Rgb.DARK_BLUE_HALF
+        StepBeat = Rgb.BLUE_HALF
+        StepActive = Rgb.MINT
+        StepMuted = Rgb.DARK_ORANGE
+        Playhead = Rgb.GREEN
+        PlayheadActive = Rgb.WHITE
+        Disabled = Rgb.BLACK
+        NoDrumRack = Rgb.RED_HALF
+        NoClip = Rgb.DARK_GREY
+        NoteEmpty = Rgb.DARK_GREY
+        NoteFilled = Rgb.BLUE_HALF
+        NoteSelected = Rgb.AMBER
+
+        class Loop(object):
+            Outside = Rgb.DARK_GREY
+            Inside = Rgb.BLUE_HALF
+            Selected = Rgb.AMBER
+            Playhead = Rgb.GREEN
+            RangeEdit = Rgb.WHITE_HALF
 
 
 # IMPORTANT: Merge with base_skin instead of redefining everything!

@@ -10,11 +10,32 @@ from novation.session_modes import SessionModesComponent
 from . import sysex_ids as ids
 from .channel_strip_with_arm_toggle import ChannelStripComponentWithArmToggle
 from .clip_copy_component import ClipCopyComponent
+from .drum_step_sequencer import DrumStepSequencerComponent
 from .scene_copy_component import SceneCopyComponent
 from .elements import Elements
 from .notifying_background import NotifyingBackgroundComponent
 from .session_with_copy import SessionComponentWithCopy
 from .skin import skin
+
+
+DRUM_FEEDBACK_CHANNEL = 1
+PROGRAMMER_MODE_COMMAND_BYTE = 14
+PROGRAMMER_MODE_ON = 1
+PROGRAMMER_MODE_OFF = 0
+LED_FEEDBACK_COMMAND_BYTE = 10
+INTERNAL_FEEDBACK_OFF = 0
+EXTERNAL_FEEDBACK_ON = 1
+SLEEP_COMMAND_BYTE = 9
+SLEEP_OFF = 1
+MIDI_CC_STATUS = 176
+PROGRAMMER_LED_CHANNEL = 0
+SESSION_BUTTON_CC = 95
+DRUMS_BUTTON_CC = 96
+KEYS_BUTTON_CC = 97
+USER_BUTTON_CC = 98
+LED_OFF = 0
+LED_SESSION = 21
+LED_SEQUENCER = 96
 
 
 class Launchpad_Mini_MK3(NovationBase):
@@ -29,9 +50,15 @@ class Launchpad_Mini_MK3(NovationBase):
         (super(Launchpad_Mini_MK3, self).__init__)(*a, **k)
 
     def on_identified(self, midi_bytes):
-        self._elements.firmware_mode_switch.send_value(sysex.DAW_MODE_BYTE)
-        self._elements.layout_switch.send_value(self._last_layout_byte)
+        self._enter_programmer_mode()
+        self.set_feedback_channels([DRUM_FEEDBACK_CHANNEL])
         super(Launchpad_Mini_MK3, self).on_identified(midi_bytes)
+
+    def disconnect(self):
+        try:
+            self._exit_programmer_mode()
+        finally:
+            super(Launchpad_Mini_MK3, self).disconnect()
 
     def can_lock_to_devices(self):
         return False
@@ -42,7 +69,10 @@ class Launchpad_Mini_MK3(NovationBase):
         self._create_clip_copy()
         self._create_stop_solo_mute_modes()
         self._create_session_modes()
+        self._create_drum_sequencer()
+        self._create_main_modes()
         self._Launchpad_Mini_MK3__on_layout_switch_value.subject = self._elements.layout_switch
+        self._Launchpad_Mini_MK3__on_selected_track_changed.subject = self.song.view
 
     def _create_session_layer(self):
         return super(Launchpad_Mini_MK3, self)._create_session_layer() + Layer(scene_launch_buttons="scene_launch_buttons")
@@ -110,15 +140,61 @@ class Launchpad_Mini_MK3(NovationBase):
         self._session_modes.set_enabled(True)
         self._Launchpad_Mini_MK3__on_session_mode_changed.subject = self._session_modes
 
+    def _create_drum_sequencer(self):
+        self._drum_group = None
+        self._drum_step_sequencer = DrumStepSequencerComponent(name="Drum_Step_Sequencer",
+          is_enabled=False,
+          drum_group_component=self._drum_group,
+          layer=Layer(grid_matrix="clip_launch_matrix"))
+
+    def _create_main_modes(self):
+        self._main_modes = ModesComponent(name="Main_Modes",
+          is_enabled=False,
+          enable_skinning=True,
+          support_momentary_mode_cycling=False,
+          layer=Layer(cycle_mode_button="user_mode_button"))
+        self._main_modes.add_mode("session", None,
+          cycle_mode_button_color="DefaultButton.Off")
+        self._main_modes.add_mode("drum_sequence", None,
+          cycle_mode_button_color="DrumSequencer.StepActive")
+        self._main_modes.selected_mode = "session"
+        self._Launchpad_Mini_MK3__on_main_mode_changed.subject = self._main_modes
+        self._main_modes.set_enabled(True)
+
     def _create_background(self):
         self._background = NotifyingBackgroundComponent(name="Background",
           is_enabled=False,
           add_nop_listeners=True,
           layer=Layer(drums_mode_button="drums_mode_button",
-          keys_mode_button="keys_mode_button",
-          user_mode_button="user_mode_button"))
+          keys_mode_button="keys_mode_button"))
         self._background.set_enabled(True)
         self._Launchpad_Mini_MK3__on_background_control_value.subject = self._background
+
+    @listens("selected_mode")
+    def __on_main_mode_changed(self, mode):
+        drum_mode = mode == "drum_sequence"
+        self._log("main mode changed: {}".format(mode))
+        if drum_mode:
+            self._set_session_components_enabled(False)
+            self._restore_clip_launch_matrix()
+            self._drum_step_sequencer.set_enabled(True)
+            self.set_controlled_track(self.song.view.selected_track)
+            self._request_midi_map_rebuild()
+            self._set_mode_button_lights(True)
+            self.show_message("Launchpad Mini MK3: Drum Sequencer")
+            self._drum_step_sequencer.update()
+        else:
+            self._drum_step_sequencer.set_enabled(False)
+            self._restore_clip_launch_matrix()
+            self.release_controlled_track()
+            self._set_session_components_enabled(True)
+            self._request_midi_map_rebuild()
+            self._set_mode_button_lights(False)
+
+    @listens("selected_track")
+    def __on_selected_track_changed(self):
+        if hasattr(self, "_main_modes") and self._main_modes.selected_mode == "drum_sequence":
+            self.set_controlled_track(self.song.view.selected_track)
 
     @listens("selected_mode")
     def __on_session_mode_changed(self, _):
@@ -132,7 +208,9 @@ class Launchpad_Mini_MK3(NovationBase):
 
     @listens("value")
     def __on_layout_switch_value(self, value):
-        self._last_layout_byte = value
+        layout_byte = value[0] if isinstance(value, tuple) else value
+        self._log("layout value: {}".format(value))
+        self._last_layout_byte = layout_byte
 
     @listens("value")
     def __on_shift_button_value(self, value):
@@ -140,3 +218,61 @@ class Launchpad_Mini_MK3(NovationBase):
         if not value:
             self._clip_copy.clear_clipboard()
             self._scene_copy.clear_clipboard()
+
+    def _log(self, message):
+        try:
+            self._c_instance.log_message("[Launchpad Mini MK3] {}".format(message))
+        except Exception:
+            pass
+
+    def _set_session_components_enabled(self, enabled):
+        self._session.set_enabled(enabled)
+        self._session_navigation.set_enabled(enabled)
+        self._session_modes.set_enabled(enabled)
+        self._stop_solo_mute_modes.set_enabled(enabled)
+
+    def _restore_clip_launch_matrix(self):
+        for button in self._elements.clip_launch_matrix:
+            if button is not None:
+                button.use_default_message()
+        self._request_midi_map_rebuild()
+
+    def _request_midi_map_rebuild(self):
+        try:
+            self.request_rebuild_midi_map()
+        except Exception:
+            pass
+
+    def _enter_programmer_mode(self):
+        self._send_launchpad_sysex(PROGRAMMER_MODE_COMMAND_BYTE, PROGRAMMER_MODE_ON)
+        self._send_launchpad_sysex(LED_FEEDBACK_COMMAND_BYTE, INTERNAL_FEEDBACK_OFF, EXTERNAL_FEEDBACK_ON)
+        self._send_launchpad_sysex(SLEEP_COMMAND_BYTE, SLEEP_OFF)
+        self._log("programmer mode enabled with external feedback")
+
+    def _exit_programmer_mode(self):
+        self._send_launchpad_sysex(PROGRAMMER_MODE_COMMAND_BYTE, PROGRAMMER_MODE_OFF)
+        self._elements.firmware_mode_switch.send_value(sysex.STANDALONE_MODE_BYTE)
+
+    def _send_launchpad_sysex(self, command_byte, *payload):
+        try:
+            self._send_midi(sysex.STD_MSG_HEADER + (ids.LP_MINI_MK3_ID, command_byte) + tuple(payload) + (sysex.SYSEX_END_BYTE,))
+        except Exception:
+            pass
+
+    def _set_mode_button_lights(self, drum_sequence_active):
+        if drum_sequence_active:
+            self._send_programmer_cc(SESSION_BUTTON_CC, LED_OFF)
+            self._send_programmer_cc(DRUMS_BUTTON_CC, LED_OFF)
+            self._send_programmer_cc(KEYS_BUTTON_CC, LED_OFF)
+            self._send_programmer_cc(USER_BUTTON_CC, LED_SEQUENCER)
+        else:
+            self._send_programmer_cc(SESSION_BUTTON_CC, LED_SESSION)
+            self._send_programmer_cc(DRUMS_BUTTON_CC, LED_OFF)
+            self._send_programmer_cc(KEYS_BUTTON_CC, LED_OFF)
+            self._send_programmer_cc(USER_BUTTON_CC, LED_OFF)
+
+    def _send_programmer_cc(self, identifier, value):
+        try:
+            self._send_midi((MIDI_CC_STATUS + PROGRAMMER_LED_CHANNEL, identifier, value), optimized=False)
+        except Exception:
+            pass

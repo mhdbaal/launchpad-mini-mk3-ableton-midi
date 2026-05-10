@@ -14,10 +14,10 @@ def get_capabilities():
                           model_name=["Launchpad Mini MK3"])), 
      
      PORTS_KEY: [
-                 inport(props=[NOTES_CC, SCRIPT]),
                  inport(props=[NOTES_CC, REMOTE]),
-                 outport(props=[NOTES_CC, SYNC, SCRIPT]),
-                 outport(props=[REMOTE])]}
+                 inport(props=[NOTES_CC, REMOTE, SCRIPT]),
+                 outport(props=[NOTES_CC, SYNC, REMOTE]),
+                 outport(props=[NOTES_CC, SYNC, REMOTE, SCRIPT])]}
 
 
 def create_instance(c_instance):

@@ -6,21 +6,27 @@
 # Size of source mod 2**32: 1283 bytes
 from __future__ import absolute_import, print_function, unicode_literals
 from ableton.v2.base import depends
-from ableton.v2.control_surface.elements import ColorSysexElement
+from ableton.v2.control_surface.elements import ColorSysexElement, SysexElement
 from novation import sysex
 from novation.launchpad_elements import LaunchpadElements, create_button
 from . import sysex_ids as ids
 
 class Elements(LaunchpadElements):
     model_id = ids.LP_MINI_MK3_ID
-    default_layout = sysex.KEYS_LAYOUT_BYTE
+    default_layout = sysex.SESSION_LAYOUT_BYTE
 
     @depends(skin=None)
     def __init__(self, skin=None, *a, **k):
         (super(Elements, self).__init__)(*a, **k)
+        self._create_drum_pads()
+        self._create_scale_feedback_switch()
         self.drums_mode_button = create_button(96, "Drums_Mode_Button")
         self.keys_mode_button = create_button(97, "Keys_Mode_Button")
         self.user_mode_button = create_button(98, "User_Mode_Button")
+        self.note_layout_switch = SysexElement(name="Note_Layout_Switch",
+          send_message_generator=(lambda v: sysex.STD_MSG_HEADER + (
+         ids.LP_MINI_MK3_ID, sysex.NOTE_LAYOUT_COMMAND_BYTE, v, sysex.SYSEX_END_BYTE)),
+          default_value=(sysex.SCALE_LAYOUT_BYTE))
         session_button_color_identifier = sysex.STD_MSG_HEADER + (
          ids.LP_MINI_MK3_ID,
          20)
