@@ -19,6 +19,12 @@ class Colors(object):
     class Mixer(object):
         TrackSelected = Rgb.AQUA
 
+    class Transport(object):
+        PlayOff = Rgb.GREEN_HALF
+        PlayOn = Rgb.GREEN
+        RecordOff = Rgb.RED_HALF
+        RecordOn = Rgb.RED
+
     class DrumSequencer(object):
         StepEmpty = Rgb.DARK_BLUE_HALF
         StepBeat = Rgb.BLUE_HALF
@@ -34,18 +40,35 @@ class Colors(object):
         NoteSelected = Rgb.AMBER
 
         class Loop(object):
-            Outside = Rgb.DARK_GREY
-            Inside = Rgb.BLUE_HALF
-            Selected = Rgb.AMBER
+            # Cyan/aqua family — visually orthogonal to Note (blue/amber)
+            # and to Step (deep blue / mint), so the bottom-right loop
+            # selector cannot be confused with the bottom-left drum pads
+            # or with the step grid above.
+            # (Avoid Rgb.PURPLE_HALF — it maps to palette 55 which is
+            # actually a dark BLUE on the Launchpad, not a dim purple.)
+            Outside = Rgb.LIGHT_BLUE_HALF
+            Inside = Rgb.LIGHT_BLUE
+            Selected = Rgb.AQUA
             Playhead = Rgb.GREEN
-            RangeEdit = Rgb.WHITE_HALF
+            RangeEdit = Rgb.WHITE
 
         class Control(object):
             Page = Rgb.BLUE_HALF
             Octave = Rgb.GREEN_HALF
             Semitone = Rgb.MINT
+            # Step-grid resolution selectors (drum sequencer side-row slots 2-5).
+            Grid = Rgb.ORANGE_HALF
+            GridSelected = Rgb.WHITE
             Reset = Rgb.DARK_ORANGE
             Shift = Rgb.AMBER
+            # Bottom-right cycle indicator: shows current mode of the 4x4 quadrant.
+            CycleLoop = Rgb.AQUA  # quadrant currently in loop mode
+            CycleVelocity = Rgb.YELLOW  # quadrant currently in velocity mode
+
+        class Velocity(object):
+            # Bottom-right 4x4 when in velocity mode (16 velocity levels).
+            Cell = Rgb.DARK_YELLOW_HALF
+            Selected = Rgb.YELLOW
 
     class MelodicSequencer(object):
         StepEmpty = Rgb.DARK_BLUE_HALF

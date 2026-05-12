@@ -1,1 +1,3 @@
 midi-remote-scripts/*
+__pycache__/
+*.pyc

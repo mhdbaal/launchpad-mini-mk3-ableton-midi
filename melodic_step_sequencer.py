@@ -446,13 +446,18 @@ class MelodicStepSequencerComponent(Component):
     def _update_audition_translations(self):
         if self._grid_matrix is None or not self.is_enabled():
             return
+        # Audition on channel 1 (not 0). Translated pitches collide on the
+        # forwarding registry with original_identifier values of OTHER pads
+        # in the matrix when both sit on channel 0; using a distinct channel
+        # makes (channel, identifier) keys disjoint. See the same fix in
+        # drum_step_sequencer.py (PLAY_CHANNEL=1).
         for y in range(7):
             pitch = self._pitch_for_row(y)
             for x in range(8):
                 button = self._get_grid_button(x, y)
                 if button is not None:
                     button.set_identifier(pitch)
-                    button.set_channel(0)
+                    button.set_channel(1)
                     button.script_forwarding = ScriptForwarding.non_consuming
         self._request_midi_map_rebuild()
 

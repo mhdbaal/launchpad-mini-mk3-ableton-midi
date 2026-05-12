@@ -1,5 +1,6 @@
 # Launchpad Mini MK3 Control Surface Script - Based on 12.0.1 with select mode, clip copy, and arm toggle
 from __future__ import absolute_import, print_function, unicode_literals
+import time
 from ableton.v2.base import listens
 from ableton.v2.control_surface import Layer
 from ableton.v2.control_surface.components import SessionOverviewComponent
@@ -17,6 +18,7 @@ from .elements import Elements
 from .notifying_background import NotifyingBackgroundComponent
 from .session_with_copy import SessionComponentWithCopy
 from .skin import skin
+from .transport_component import TransportComponent
 
 
 DRUM_FEEDBACK_CHANNEL = 1
@@ -34,10 +36,20 @@ SESSION_BUTTON_CC = 95
 DRUMS_BUTTON_CC = 96
 KEYS_BUTTON_CC = 97
 USER_BUTTON_CC = 98
+UP_BUTTON_CC = 91
+DOWN_BUTTON_CC = 92
+LEFT_BUTTON_CC = 93
+RIGHT_BUTTON_CC = 94
 LED_OFF = 0
 LED_SESSION = 21
+LED_SESSION_DIM = 27  # GREEN_HALF — "session button is available, press to switch"
 LED_SEQUENCER = 96
 LED_MELODIC = 41
+LED_ARROW_OCTAVE = 27   # GREEN_HALF, matches Control.Octave skin
+LED_ARROW_SEMITONE = 29  # MINT, matches Control.Semitone skin
+# Session-button hold-to-preview threshold while in drum_sequence main mode.
+# Below: tap → latch session mode. Above: hold → revert to drum_sequence on release.
+SESSION_HOLD_THRESHOLD = 0.3
 
 
 class Launchpad_Mini_MK3(NovationBase):
@@ -49,6 +61,10 @@ class Launchpad_Mini_MK3(NovationBase):
 
     def __init__(self, *a, **k):
         self._last_layout_byte = sysex.SESSION_LAYOUT_BYTE
+        # Tracks a session-button press that started while in drum_sequence
+        # main mode. None when not held-from-drum; a time.time() value while
+        # held. Used to distinguish a tap (latch session) from a hold (preview).
+        self._session_preview_press_time = None
         (super(Launchpad_Mini_MK3, self).__init__)(*a, **k)
 
     def on_identified(self, midi_bytes):
@@ -71,11 +87,17 @@ class Launchpad_Mini_MK3(NovationBase):
         self._create_clip_copy()
         self._create_stop_solo_mute_modes()
         self._create_session_modes()
+        self._create_transport()
         self._create_drum_sequencer()
         self._create_melodic_sequencer()
         self._create_main_modes()
         self._Launchpad_Mini_MK3__on_layout_switch_value.subject = self._elements.layout_switch
         self._Launchpad_Mini_MK3__on_selected_track_changed.subject = self.song.view
+        self._Launchpad_Mini_MK3__on_session_mode_button_value.subject = self._elements.session_mode_button
+        self._Launchpad_Mini_MK3__on_up_button_value.subject = self._elements.up_button
+        self._Launchpad_Mini_MK3__on_down_button_value.subject = self._elements.down_button
+        self._Launchpad_Mini_MK3__on_left_button_value.subject = self._elements.left_button
+        self._Launchpad_Mini_MK3__on_right_button_value.subject = self._elements.right_button
 
     def _create_session_layer(self):
         return super(Launchpad_Mini_MK3, self)._create_session_layer() + Layer(scene_launch_buttons="scene_launch_buttons")
@@ -143,6 +165,18 @@ class Launchpad_Mini_MK3(NovationBase):
         self._session_modes.set_enabled(True)
         self._Launchpad_Mini_MK3__on_session_mode_changed.subject = self._session_modes
 
+    def _create_transport(self):
+        """Play/Stop on Drums button, Session Record on Keys button. Session-mode only.
+
+        The buttons remain in the background layer for their normal nop handling;
+        the transport attaches additional value listeners directly to the elements
+        (same pattern as the sequencer control buttons) and drives the LEDs via
+        raw CC writes."""
+        self._transport = TransportComponent(name="Transport", is_enabled=False)
+        self._transport.set_buttons(self._elements.drums_mode_button,
+          self._elements.keys_mode_button)
+        self._transport.set_enabled(True)
+
     def _create_drum_sequencer(self):
         self._drum_group = None
         self._drum_step_sequencer = DrumStepSequencerComponent(name="Drum_Step_Sequencer",
@@ -174,6 +208,9 @@ class Launchpad_Mini_MK3(NovationBase):
         self._main_modes.set_enabled(True)
 
     def _create_background(self):
+        # drums/keys stay in the background's nop layer (preserves the layout-switch
+        # enquire on press); the TransportComponent attaches its own value listeners
+        # on top of these elements in session mode.
         self._background = NotifyingBackgroundComponent(name="Background",
           is_enabled=False,
           add_nop_listeners=True,
@@ -188,6 +225,9 @@ class Launchpad_Mini_MK3(NovationBase):
         melodic_mode = mode == "melodic_sequence"
         sequencer_mode = drum_mode or melodic_mode
         self._log("main mode changed: {}".format(mode))
+        # Transport (Drums=Play, Keys=Record) stays live in session and
+        # drum_sequence; only melodic_sequence darkens the buttons.
+        self._transport.set_enabled(not melodic_mode)
         if sequencer_mode:
             self._set_session_components_enabled(False)
             if drum_mode:
@@ -239,6 +279,47 @@ class Launchpad_Mini_MK3(NovationBase):
         self._last_layout_byte = layout_byte
 
     @listens("value")
+    def __on_session_mode_button_value(self, value):
+        """In drum_sequence main mode, the Session button doubles as a return-to-session
+        control with momentary-preview semantics:
+          - tap (release within SESSION_HOLD_THRESHOLD) -> latch session mode
+          - hold (release after threshold)              -> revert to drum_sequence
+        In session or melodic main modes this listener is a no-op; the Session button
+        keeps its standard behavior (cycle launch/overview, owned by session_modes).
+        """
+        if value:
+            if self._main_modes.selected_mode == "drum_sequence":
+                self._session_preview_press_time = time.time()
+                self._main_modes.selected_mode = "session"
+            return
+        if self._session_preview_press_time is None:
+            return
+        held = time.time() - self._session_preview_press_time
+        self._session_preview_press_time = None
+        if held > SESSION_HOLD_THRESHOLD:
+            self._main_modes.selected_mode = "drum_sequence"
+
+    @listens("value")
+    def __on_up_button_value(self, value):
+        if value and self._main_modes.selected_mode == "drum_sequence":
+            self._drum_step_sequencer.adjust_pitch_offset(12)
+
+    @listens("value")
+    def __on_down_button_value(self, value):
+        if value and self._main_modes.selected_mode == "drum_sequence":
+            self._drum_step_sequencer.adjust_pitch_offset(-12)
+
+    @listens("value")
+    def __on_left_button_value(self, value):
+        if value and self._main_modes.selected_mode == "drum_sequence":
+            self._drum_step_sequencer.adjust_pitch_offset(-1)
+
+    @listens("value")
+    def __on_right_button_value(self, value):
+        if value and self._main_modes.selected_mode == "drum_sequence":
+            self._drum_step_sequencer.adjust_pitch_offset(1)
+
+    @listens("value")
     def __on_shift_button_value(self, value):
         """Clear both clipboards when shift button is released."""
         if not value:
@@ -256,6 +337,8 @@ class Launchpad_Mini_MK3(NovationBase):
         self._session_navigation.set_enabled(enabled)
         self._session_modes.set_enabled(enabled)
         self._stop_solo_mute_modes.set_enabled(enabled)
+        # NOTE: TransportComponent is handled separately in __on_main_mode_changed.
+        # It stays active in session AND drum_sequence (only off in melodic).
 
     def _restore_clip_launch_matrix(self):
         for button in self._elements.clip_launch_matrix:
@@ -287,20 +370,37 @@ class Launchpad_Mini_MK3(NovationBase):
 
     def _set_mode_button_lights(self, mode):
         if mode == "drum_sequence":
-            self._send_programmer_cc(SESSION_BUTTON_CC, LED_OFF)
-            self._send_programmer_cc(DRUMS_BUTTON_CC, LED_OFF)
-            self._send_programmer_cc(KEYS_BUTTON_CC, LED_OFF)
+            # Dim green = "session button is reachable" (tap to latch session,
+            # hold to preview). See __on_session_mode_button_value.
+            self._send_programmer_cc(SESSION_BUTTON_CC, LED_SESSION_DIM)
+            # Drums/Keys are driven by TransportComponent (still active in drum_sequence).
             self._send_programmer_cc(USER_BUTTON_CC, LED_SEQUENCER)
+            # Arrows drive octave / semitone of the drum-pad selector.
+            self._send_programmer_cc(UP_BUTTON_CC, LED_ARROW_OCTAVE)
+            self._send_programmer_cc(DOWN_BUTTON_CC, LED_ARROW_OCTAVE)
+            self._send_programmer_cc(LEFT_BUTTON_CC, LED_ARROW_SEMITONE)
+            self._send_programmer_cc(RIGHT_BUTTON_CC, LED_ARROW_SEMITONE)
         elif mode == "melodic_sequence":
             self._send_programmer_cc(SESSION_BUTTON_CC, LED_OFF)
             self._send_programmer_cc(DRUMS_BUTTON_CC, LED_OFF)
             self._send_programmer_cc(KEYS_BUTTON_CC, LED_OFF)
             self._send_programmer_cc(USER_BUTTON_CC, LED_MELODIC)
+            self._send_programmer_cc(UP_BUTTON_CC, LED_OFF)
+            self._send_programmer_cc(DOWN_BUTTON_CC, LED_OFF)
+            self._send_programmer_cc(LEFT_BUTTON_CC, LED_OFF)
+            self._send_programmer_cc(RIGHT_BUTTON_CC, LED_OFF)
         else:
             self._send_programmer_cc(SESSION_BUTTON_CC, LED_SESSION)
-            self._send_programmer_cc(DRUMS_BUTTON_CC, LED_OFF)
-            self._send_programmer_cc(KEYS_BUTTON_CC, LED_OFF)
+            # Drums/Keys are driven by TransportComponent in session mode.
             self._send_programmer_cc(USER_BUTTON_CC, LED_OFF)
+            # Hand the arrows back to session_navigation; turn them off here
+            # so we don't leave a stale octave/semitone color when leaving the
+            # drum sequencer. session_navigation will relight them when the
+            # user switches to session overview.
+            self._send_programmer_cc(UP_BUTTON_CC, LED_OFF)
+            self._send_programmer_cc(DOWN_BUTTON_CC, LED_OFF)
+            self._send_programmer_cc(LEFT_BUTTON_CC, LED_OFF)
+            self._send_programmer_cc(RIGHT_BUTTON_CC, LED_OFF)
 
     def _send_programmer_cc(self, identifier, value):
         try:
