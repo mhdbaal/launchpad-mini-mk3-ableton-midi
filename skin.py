@@ -28,8 +28,18 @@ class Colors(object):
     class DrumSequencer(object):
         StepEmpty = Rgb.DARK_BLUE_HALF
         StepBeat = Rgb.BLUE_HALF
-        StepActive = Rgb.MINT
+        StepActive = Rgb.MINT  # fallback when no note can be resolved
         StepMuted = Rgb.DARK_ORANGE
+        # Velocity heat-map (cold → hot). Each note's step pad uses the tier
+        # whose range covers its velocity. New notes default to vel 100 →
+        # `StepVelLoud`. Adjusting velocity via arrows visibly recolors the pad.
+        StepVelGhost = Rgb.LIGHT_BLUE       # 1-31 (ghost / very soft)
+        StepVelSoft = Rgb.MINT              # 32-63
+        StepVelMedium = Rgb.AMBER           # 64-95
+        StepVelLoud = Rgb.YELLOW            # 96-127
+        # Highlight for a step pad currently held by the user (anchor for
+        # arrow-driven velocity / nudge edits, or for length extension).
+        StepHeld = Rgb.AMBER
         Playhead = Rgb.GREEN
         PlayheadActive = Rgb.WHITE
         Disabled = Rgb.BLACK
@@ -59,21 +69,35 @@ class Colors(object):
             # Step-grid resolution selectors (drum sequencer side-row slots 2-5).
             Grid = Rgb.ORANGE_HALF
             GridSelected = Rgb.WHITE
+            # Ternary (triplet) grid cells use a distinct color family so the
+            # user can spot at a glance that the resolution is ternary, not
+            # binary. PURPLE_HALF on this device renders as dark blue (see
+            # `(Avoid Rgb.PURPLE_HALF...)` note in Loop above), so use PURPLE.
+            GridTernary = Rgb.PURPLE
             Reset = Rgb.DARK_ORANGE
             Shift = Rgb.AMBER
-            # Bottom-right cycle indicator: shows current mode of the 4x4 quadrant.
-            CycleLoop = Rgb.AQUA  # quadrant currently in loop mode
-            CycleVelocity = Rgb.YELLOW  # quadrant currently in velocity mode
-
-        class Velocity(object):
-            # Bottom-right 4x4 when in velocity mode (16 velocity levels).
-            Cell = Rgb.DARK_YELLOW_HALF
-            Selected = Rgb.YELLOW
+            # Clip-level actions (slots 0 and 1, top of column).
+            CaptureMidi = Rgb.GREEN_HALF       # dim until capturable; bright on press
+            CaptureMidiReady = Rgb.GREEN       # song.can_capture_midi == True
+            Quantize = Rgb.AQUA
+            # Slot 6 cycle button: switches the bottom-right 4x4 between
+            # loop selector (default) and grid resolution selector.
+            CycleLoop = Rgb.AQUA
+            CycleGrid = Rgb.ORANGE
 
     class MelodicSequencer(object):
         StepEmpty = Rgb.DARK_BLUE_HALF
         StepBeat = Rgb.BLUE_HALF
-        StepActive = Rgb.MINT
+        StepActive = Rgb.MINT  # fallback when no note can be resolved
+        # Velocity heat-map mirroring the drum sequencer tiers. Same 4 ranges
+        # so users can read either sequencer the same way.
+        StepVelGhost = Rgb.LIGHT_BLUE
+        StepVelSoft = Rgb.MINT
+        StepVelMedium = Rgb.AMBER
+        StepVelLoud = Rgb.YELLOW
+        # Highlight for a step pad currently held by the user (selection
+        # anchor for Quantize and similar clip-action gestures).
+        StepHeld = Rgb.AMBER
         Root = Rgb.AMBER
         Playhead = Rgb.GREEN
         PlayheadActive = Rgb.WHITE
@@ -94,8 +118,29 @@ class Colors(object):
             Page = Rgb.BLUE_HALF
             Octave = Rgb.GREEN_HALF
             Semitone = Rgb.MINT
+            # Step-grid resolution selectors on scene-button slots 0-3
+            # (mirrors the drum sequencer convention).
+            Grid = Rgb.ORANGE_HALF
+            GridSelected = Rgb.WHITE
+            # Ternary (triplet) grid cells use a distinct color family so the
+            # user can spot at a glance that the resolution is ternary, not
+            # binary. PURPLE_HALF on this device renders as dark blue (see
+            # `(Avoid Rgb.PURPLE_HALF...)` note in Loop above), so use PURPLE.
+            GridTernary = Rgb.PURPLE
+            # Scale cycle (slot 6): bright when shift is held, dim when not
+            # (the grey/disabled state is handled by the helper).
+            ScaleCycle = Rgb.AQUA
             Reset = Rgb.DARK_ORANGE
             Shift = Rgb.AMBER
+            # Clip-level actions on slots 5/6 when shift is NOT held.
+            # When shift IS held, slots 5/6 show Chromatic/ScaleCycle instead.
+            CaptureMidi = Rgb.GREEN_HALF
+            CaptureMidiReady = Rgb.GREEN
+            Quantize = Rgb.AQUA
+            # Slot 6 cycle: switches the bottom-right 4x4 between the default
+            # pitch grid and the grid resolution selector.
+            CycleLoop = Rgb.AQUA
+            CycleGrid = Rgb.ORANGE
 
 
 # IMPORTANT: Merge with base_skin instead of redefining everything!

@@ -15,9 +15,14 @@ from .drum_step_sequencer import DrumStepSequencerComponent
 from .melodic_step_sequencer import MelodicStepSequencerComponent
 from .scene_copy_component import SceneCopyComponent
 from .elements import Elements
+from .event_bus import EventBus
+from .events import Event
+from .m4l_subscriber import M4LSubscriber
+from .notification_dispatcher import NotificationDispatcher
 from .notifying_background import NotifyingBackgroundComponent
 from .session_with_copy import SessionComponentWithCopy
 from .skin import skin
+from .status_bar_subscriber import StatusBarSubscriber
 from .transport_component import TransportComponent
 
 
@@ -47,9 +52,20 @@ LED_SEQUENCER = 96
 LED_MELODIC = 41
 LED_ARROW_OCTAVE = 27   # GREEN_HALF, matches Control.Octave skin
 LED_ARROW_SEMITONE = 29  # MINT, matches Control.Semitone skin
+# A press shorter than this on the shift button (slot 7 / stop-solo-mute /
+# scene_launch_buttons_raw[7]) qualifies as a "quick tap". Two such taps
+# within SHIFT_DOUBLE_TAP_WINDOW (measured release-to-release) toggle the
+# shift-lock state in sequencer modes. A long press (> threshold) is a
+# momentary hold and resets the double-tap detector — it does NOT toggle.
+SHIFT_LOCK_TAP_THRESHOLD = 0.3
+SHIFT_DOUBLE_TAP_WINDOW = 0.35
 # Session-button hold-to-preview threshold while in drum_sequence main mode.
 # Below: tap → latch session mode. Above: hold → revert to drum_sequence on release.
 SESSION_HOLD_THRESHOLD = 0.3
+# Velocity delta applied per Up/Down arrow press in drum_sequence mode while
+# a step pad is held. 16 ticks span the 0..127 range — coarse enough to move
+# quickly, fine enough to land precisely with one or two extra presses.
+DRUM_VELOCITY_ARROW_STEP = 8
 
 
 class Launchpad_Mini_MK3(NovationBase):
@@ -61,10 +77,30 @@ class Launchpad_Mini_MK3(NovationBase):
 
     def __init__(self, *a, **k):
         self._last_layout_byte = sysex.SESSION_LAYOUT_BYTE
-        # Tracks a session-button press that started while in drum_sequence
-        # main mode. None when not held-from-drum; a time.time() value while
-        # held. Used to distinguish a tap (latch session) from a hold (preview).
+        # Tracks a session-button press that started while in a sequencer
+        # main mode. None when not held-from-sequencer; a time.time() value
+        # while held. Used to distinguish a tap (latch session) from a hold
+        # (preview + revert). _session_preview_return_mode remembers which
+        # sequencer to go back to on long-hold release ("drum_sequence" or
+        # "melodic_sequence").
         self._session_preview_press_time = None
+        self._session_preview_return_mode = None
+        # Shift button lock state. While locked, "effective shift" stays on
+        # without the user needing to physically hold the button. Toggled by
+        # a double-tap (two quick presses within SHIFT_DOUBLE_TAP_WINDOW) and
+        # only in sequencer main modes — in session mode the shift button
+        # cycles stop-solo-mute and would clash with a tap-based toggle.
+        self._shift_press_time = None
+        self._shift_last_tap_release_time = None
+        self._shift_locked = False
+        # Notification plumbing: created early so components can take the
+        # bus reference at construction time in _create_components.
+        # Setting _event_bus = None here would make every _emit() a no-op
+        # — handy kill switch if you want to mute all notifications.
+        self._event_bus = EventBus(logger=self._log)
+        self._notification_dispatcher = None  # built in _create_notification_subscribers
+        self._status_bar_subscriber = None
+        self._m4l_subscriber = None
         (super(Launchpad_Mini_MK3, self).__init__)(*a, **k)
 
     def on_identified(self, midi_bytes):
@@ -73,6 +109,11 @@ class Launchpad_Mini_MK3(NovationBase):
         super(Launchpad_Mini_MK3, self).on_identified(midi_bytes)
 
     def disconnect(self):
+        try:
+            if self._notification_dispatcher is not None:
+                self._notification_dispatcher.disconnect()
+        except Exception:
+            pass
         try:
             self._exit_programmer_mode()
         finally:
@@ -83,6 +124,7 @@ class Launchpad_Mini_MK3(NovationBase):
 
     def _create_components(self):
         super(Launchpad_Mini_MK3, self)._create_components()
+        self._create_notification_subscribers()
         self._create_background()
         self._create_clip_copy()
         self._create_stop_solo_mute_modes()
@@ -166,9 +208,11 @@ class Launchpad_Mini_MK3(NovationBase):
         self._Launchpad_Mini_MK3__on_session_mode_changed.subject = self._session_modes
 
     def _create_transport(self):
-        """Play/Stop on Drums button, Session Record on Keys button. Session-mode only.
+        """Play/Stop on Drums button, Session Record on Keys button.
 
-        The buttons remain in the background layer for their normal nop handling;
+        Active in every main mode (session, drum_sequence, melodic_sequence)
+        — global transport is useful regardless of what's on the grid. The
+        buttons remain in the background layer for their normal nop handling;
         the transport attaches additional value listeners directly to the elements
         (same pattern as the sequencer control buttons) and drives the LEDs via
         raw CC writes."""
@@ -182,12 +226,14 @@ class Launchpad_Mini_MK3(NovationBase):
         self._drum_step_sequencer = DrumStepSequencerComponent(name="Drum_Step_Sequencer",
           is_enabled=False,
           drum_group_component=self._drum_group,
+          event_bus=self._event_bus,
           layer=Layer(grid_matrix="clip_launch_matrix"))
         self._drum_step_sequencer.set_control_buttons(self._elements.scene_launch_buttons_raw)
 
     def _create_melodic_sequencer(self):
         self._melodic_step_sequencer = MelodicStepSequencerComponent(name="Melodic_Step_Sequencer",
           is_enabled=False,
+          event_bus=self._event_bus,
           layer=Layer(grid_matrix="clip_launch_matrix"))
         self._melodic_step_sequencer.set_control_buttons(self._elements.scene_launch_buttons_raw)
 
@@ -219,15 +265,34 @@ class Launchpad_Mini_MK3(NovationBase):
         self._background.set_enabled(True)
         self._Launchpad_Mini_MK3__on_background_control_value.subject = self._background
 
+    def _create_notification_subscribers(self):
+        """Wire the event bus to the status bar (always) and the LP Notify
+        M4L device (when present). Each subscriber is independent: muting
+        one or both has no effect on the rest of the script — components
+        emit semantic events regardless of who's listening.
+
+        To kill all M4L notifications, skip the M4LSubscriber subscribe()
+        call below. To go full silent (no status bar either), skip the
+        StatusBarSubscriber too — components emit into the void.
+        """
+        # M4L dispatcher: discovers the "LP Notify" device on any track and
+        # writes to its exposed parameters. No-ops if device absent.
+        self._notification_dispatcher = NotificationDispatcher(
+            song=self.song, logger=self._log)
+        self._status_bar_subscriber = StatusBarSubscriber(self.show_message)
+        self._m4l_subscriber = M4LSubscriber(self._notification_dispatcher)
+        self._event_bus.subscribe(self._status_bar_subscriber)
+        self._event_bus.subscribe(self._m4l_subscriber)
+
     @listens("selected_mode")
     def __on_main_mode_changed(self, mode):
         drum_mode = mode == "drum_sequence"
         melodic_mode = mode == "melodic_sequence"
         sequencer_mode = drum_mode or melodic_mode
         self._log("main mode changed: {}".format(mode))
-        # Transport (Drums=Play, Keys=Record) stays live in session and
-        # drum_sequence; only melodic_sequence darkens the buttons.
-        self._transport.set_enabled(not melodic_mode)
+        # Transport (Drums=Play, Keys=Record) stays live in every main mode;
+        # play/record are useful while sequencing as well as in session.
+        self._transport.set_enabled(True)
         if sequencer_mode:
             self._set_session_components_enabled(False)
             if drum_mode:
@@ -243,10 +308,10 @@ class Launchpad_Mini_MK3(NovationBase):
             self._request_midi_map_rebuild()
             self._set_mode_button_lights(mode)
             if drum_mode:
-                self.show_message("Launchpad Mini MK3: Drum Sequencer")
+                self._emit(Event.MAIN_MODE_CHANGED, mode="drum_sequence")
                 self._drum_step_sequencer.update()
             else:
-                self.show_message("Launchpad Mini MK3: Melodic Sequencer")
+                self._emit(Event.MAIN_MODE_CHANGED, mode="melodic_sequence")
                 self._melodic_step_sequencer.update()
         else:
             self._drum_step_sequencer.set_enabled(False)
@@ -280,57 +345,160 @@ class Launchpad_Mini_MK3(NovationBase):
 
     @listens("value")
     def __on_session_mode_button_value(self, value):
-        """In drum_sequence main mode, the Session button doubles as a return-to-session
-        control with momentary-preview semantics:
+        """While in a sequencer main mode (drum_sequence or melodic_sequence),
+        the Session button doubles as a return-to-session control with
+        momentary-preview semantics:
           - tap (release within SESSION_HOLD_THRESHOLD) -> latch session mode
-          - hold (release after threshold)              -> revert to drum_sequence
-        In session or melodic main modes this listener is a no-op; the Session button
-        keeps its standard behavior (cycle launch/overview, owned by session_modes).
+          - hold (release after threshold)              -> revert to the sequencer
+        In session main mode this listener is a no-op; the Session button keeps
+        its standard behavior (cycle launch/overview, owned by session_modes).
         """
+        sequencer_modes = ("drum_sequence", "melodic_sequence")
         if value:
-            if self._main_modes.selected_mode == "drum_sequence":
+            current = self._main_modes.selected_mode
+            if current in sequencer_modes:
+                # Remember which sequencer to revert to on long-hold release.
                 self._session_preview_press_time = time.time()
+                self._session_preview_return_mode = current
                 self._main_modes.selected_mode = "session"
             return
         if self._session_preview_press_time is None:
             return
         held = time.time() - self._session_preview_press_time
         self._session_preview_press_time = None
-        if held > SESSION_HOLD_THRESHOLD:
-            self._main_modes.selected_mode = "drum_sequence"
+        return_mode = self._session_preview_return_mode
+        self._session_preview_return_mode = None
+        if held > SESSION_HOLD_THRESHOLD and return_mode is not None:
+            self._main_modes.selected_mode = return_mode
+
+    def _arrow_target(self):
+        """Return the sequencer that should react to the top arrow buttons in
+        the current main mode, or None for session mode (where session_navigation
+        owns the arrows)."""
+        mode = self._main_modes.selected_mode
+        if mode == "drum_sequence":
+            return self._drum_step_sequencer
+        if mode == "melodic_sequence":
+            return self._melodic_step_sequencer
+        return None
 
     @listens("value")
     def __on_up_button_value(self, value):
-        if value and self._main_modes.selected_mode == "drum_sequence":
-            self._drum_step_sequencer.adjust_pitch_offset(12)
+        if not value:
+            return
+        target = self._arrow_target()
+        if target is None:
+            return
+        # In drum mode, prefer per-note velocity edit when a step pad is held;
+        # fall back to the legacy pitch_offset shift if no held step has a note.
+        if (self._main_modes.selected_mode == "drum_sequence"
+                and target.adjust_held_velocity(DRUM_VELOCITY_ARROW_STEP)):
+            return
+        target.adjust_pitch_offset(12)
 
     @listens("value")
     def __on_down_button_value(self, value):
-        if value and self._main_modes.selected_mode == "drum_sequence":
-            self._drum_step_sequencer.adjust_pitch_offset(-12)
+        if not value:
+            return
+        target = self._arrow_target()
+        if target is None:
+            return
+        if (self._main_modes.selected_mode == "drum_sequence"
+                and target.adjust_held_velocity(-DRUM_VELOCITY_ARROW_STEP)):
+            return
+        target.adjust_pitch_offset(-12)
 
     @listens("value")
     def __on_left_button_value(self, value):
-        if value and self._main_modes.selected_mode == "drum_sequence":
-            self._drum_step_sequencer.adjust_pitch_offset(-1)
+        if not value:
+            return
+        target = self._arrow_target()
+        if target is None:
+            return
+        # In drum mode, prefer note nudge (-1 step) when a step pad is held;
+        # otherwise shift the drum-pad selector by one semitone (legacy).
+        if (self._main_modes.selected_mode == "drum_sequence"
+                and target.nudge_held_notes(-1)):
+            return
+        target.adjust_pitch_offset(-1)
 
     @listens("value")
     def __on_right_button_value(self, value):
-        if value and self._main_modes.selected_mode == "drum_sequence":
-            self._drum_step_sequencer.adjust_pitch_offset(1)
+        if not value:
+            return
+        target = self._arrow_target()
+        if target is None:
+            return
+        if (self._main_modes.selected_mode == "drum_sequence"
+                and target.nudge_held_notes(1)):
+            return
+        target.adjust_pitch_offset(1)
 
     @listens("value")
     def __on_shift_button_value(self, value):
-        """Clear both clipboards when shift button is released."""
-        if not value:
+        """Shift button = scene_launch_buttons_raw[7] (device stop-solo-mute).
+        Multiple consumers:
+          - in session mode: hold + tap clip / scene to copy (cleared on release)
+          - in sequencer modes: hold (or lock) reveals the shift-gated controls
+            (grid resolutions, triplet toggle in both sequencers, the
+            page-selector row in melodic, and the step-grid loop range picker).
+
+        Lock toggle: a DOUBLE tap (two quick presses, each ≤ tap threshold,
+        with release-to-release gap ≤ double-tap window) toggles a sticky lock
+        so the gated controls stay visible without holding the button. The
+        toggle is restricted to sequencer modes — in session mode the same
+        button cycles stop-solo-mute and a tap-based toggle would clash.
+        A long press resets the double-tap detector (so "hold + tap" never
+        accidentally locks).
+        """
+        held = bool(value)
+        now = time.time()
+        if held:
+            self._shift_press_time = now
+        else:
+            duration = (now - self._shift_press_time
+                        if self._shift_press_time is not None else None)
+            self._shift_press_time = None
+            in_sequencer = (hasattr(self, "_main_modes")
+                            and self._main_modes.selected_mode
+                                in ("drum_sequence", "melodic_sequence"))
+            if duration is not None:
+                if duration <= SHIFT_LOCK_TAP_THRESHOLD and in_sequencer:
+                    last = self._shift_last_tap_release_time
+                    if (last is not None
+                            and now - last <= SHIFT_DOUBLE_TAP_WINDOW):
+                        self._shift_locked = not self._shift_locked
+                        self._log("shift lock: {}".format(self._shift_locked))
+                        self._emit(Event.SHIFT_LOCK_CHANGED,
+                                   locked=self._shift_locked)
+                        self._shift_last_tap_release_time = None
+                    else:
+                        self._shift_last_tap_release_time = now
+                else:
+                    # Long press, or session mode: reset the double-tap
+                    # detector so a stale first tap can't pair with a later
+                    # unrelated tap.
+                    self._shift_last_tap_release_time = None
+            # Clipboards still clear on physical release regardless of lock —
+            # copy-paste is a momentary action tied to the hold gesture.
             self._clip_copy.clear_clipboard()
             self._scene_copy.clear_clipboard()
+        effective = held or self._shift_locked
+        self._drum_step_sequencer.set_device_shift_held(effective)
+        self._melodic_step_sequencer.set_device_shift_held(effective)
 
     def _log(self, message):
         try:
             self._c_instance.log_message("[Launchpad Mini MK3] {}".format(message))
         except Exception:
             pass
+
+    def _emit(self, event_name, **payload):
+        """Fire a semantic event on the bus. No-op if the bus is None
+        (kill switch). The script's status bar + M4L delivery is handled
+        by subscribers attached in _create_notification_subscribers."""
+        if self._event_bus is not None:
+            self._event_bus.emit(event_name, **payload)
 
     def _set_session_components_enabled(self, enabled):
         self._session.set_enabled(enabled)
@@ -381,14 +549,15 @@ class Launchpad_Mini_MK3(NovationBase):
             self._send_programmer_cc(LEFT_BUTTON_CC, LED_ARROW_SEMITONE)
             self._send_programmer_cc(RIGHT_BUTTON_CC, LED_ARROW_SEMITONE)
         elif mode == "melodic_sequence":
-            self._send_programmer_cc(SESSION_BUTTON_CC, LED_OFF)
-            self._send_programmer_cc(DRUMS_BUTTON_CC, LED_OFF)
-            self._send_programmer_cc(KEYS_BUTTON_CC, LED_OFF)
+            # Same affordances as drum_sequence: dim-green session = "tap to
+            # return", drums/keys driven by TransportComponent (play/record),
+            # arrows = octave / semitone of the pitch row range.
+            self._send_programmer_cc(SESSION_BUTTON_CC, LED_SESSION_DIM)
             self._send_programmer_cc(USER_BUTTON_CC, LED_MELODIC)
-            self._send_programmer_cc(UP_BUTTON_CC, LED_OFF)
-            self._send_programmer_cc(DOWN_BUTTON_CC, LED_OFF)
-            self._send_programmer_cc(LEFT_BUTTON_CC, LED_OFF)
-            self._send_programmer_cc(RIGHT_BUTTON_CC, LED_OFF)
+            self._send_programmer_cc(UP_BUTTON_CC, LED_ARROW_OCTAVE)
+            self._send_programmer_cc(DOWN_BUTTON_CC, LED_ARROW_OCTAVE)
+            self._send_programmer_cc(LEFT_BUTTON_CC, LED_ARROW_SEMITONE)
+            self._send_programmer_cc(RIGHT_BUTTON_CC, LED_ARROW_SEMITONE)
         else:
             self._send_programmer_cc(SESSION_BUTTON_CC, LED_SESSION)
             # Drums/Keys are driven by TransportComponent in session mode.
