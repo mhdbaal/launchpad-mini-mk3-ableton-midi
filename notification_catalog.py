@@ -42,6 +42,7 @@ class Msg(object):
     MELODIC_CHROMATIC   = 35  # (on)
     MELODIC_PREVIEW     = 36  # (on)
     MELODIC_NAV         = 37  # (page_1based, octave, semitone)
+    MELODIC_VELOCITY    = 38  # (velocity)
 
     # Errors (90-99), arg1 discriminates source
     #   0 = drum, 1 = melodic

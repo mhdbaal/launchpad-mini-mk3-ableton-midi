@@ -87,6 +87,32 @@ MELODIC_COLOR_VALUES = {
 }
 
 
+# Step-hold velocity selector: 16 raw palette indices forming a cool→hot ramp.
+# Indices are firmware-standard (same on every Launchpad), so this tuple is
+# device-agnostic. Used by both drum and melodic sequencers when rendering the
+# velocity-bar overlay. Order matches the user-facing read order: index 0 in
+# the tuple = level 1 (lowest), index 15 = level 16 (loudest).
+VELOCITY_LEVEL_PALETTE = (
+    21,  # 1  GREEN
+    21,  # 2  GREEN
+    21,  # 3  GREEN
+    29,  # 4  MINT
+    29,  # 5  MINT
+    96,  # 6  AMBER
+    96,  # 7  AMBER
+    97,  # 8  YELLOW
+    97,  # 9  YELLOW
+    9,   # 10 ORANGE
+    9,   # 11 ORANGE
+    5,   # 12 RED
+    5,   # 13 RED
+    5,   # 14 RED
+    5,   # 15 RED
+    3,   # 16 WHITE (peak)
+)
+VELOCITY_LEVEL_DIM = 1  # DARK_GREY, used for pads above the current level.
+
+
 def send_pad_color(parent, button, color, palette):
     """Light a single pad with a skin-named color in Programmer mode.
 

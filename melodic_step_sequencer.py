@@ -8,8 +8,17 @@ from ableton.v2.control_surface import Component
 from ableton.v2.control_surface.input_control_element import ScriptForwarding
 
 from .events import Event
-from .palette import MELODIC_COLOR_VALUES, send_pad_color
-from .programmer_mode import AUDITION_CHANNEL
+from .palette import (
+    MELODIC_COLOR_VALUES,
+    VELOCITY_LEVEL_DIM,
+    VELOCITY_LEVEL_PALETTE,
+    send_pad_color,
+)
+from .programmer_mode import (
+    AUDITION_CHANNEL,
+    NOTE_ON_STATUS,
+    PROGRAMMER_LED_CHANNEL,
+)
 
 
 STEPS_PER_PAGE = 8
@@ -83,6 +92,14 @@ GRID_OPTIONS = (
 TERNARY_FIRST_INDEX = 8
 DEFAULT_GRID_INDEX = 2  # 1/16
 VELOCITY_TIER_BOUNDARIES = (31, 63, 95)
+# Step-hold velocity selector: 16 levels overlaid on the bottom 2 rows
+# (y=6 and y=7) while at least one cell with a note is held. Level → MIDI
+# velocity mapping is `level * 8` clamped to 1..127 (level 16 → 127).
+VELOCITY_MIN = 1
+VELOCITY_MAX = 127
+VELOCITY_OVERLAY_LEVELS = 16
+VELOCITY_OVERLAY_ROW_BOTTOM = 7  # levels 1..8
+VELOCITY_OVERLAY_ROW_TOP = 6     # levels 9..16
 
 # Scene-button slot indices in melodic_sequence mode (top → bottom):
 #     0: Capture MIDI (shift NOT held) / Chromatic toggle (shift held)
@@ -371,6 +388,18 @@ class MelodicStepSequencerComponent(Component):
         if self._device_shift_held and PITCH_ROW_MIN <= y <= PITCH_ROW_MAX:
             self._handle_step_loop_press(x, bool(value))
             return
+        # Step-hold velocity selector: when a held cell has a note, the bottom
+        # two rows (y=6, y=7) become a 16-level velocity bar. Wins over both
+        # pitch toggling and the bottom-right grid-resolution selector.
+        # Press = apply velocity; release on the overlay is a no-op so the
+        # underlying pitch toggle never fires from a selector tap.
+        if self._velocity_overlay_should_show() and y in (
+                VELOCITY_OVERLAY_ROW_TOP, VELOCITY_OVERLAY_ROW_BOTTOM):
+            if value:
+                level = self._velocity_overlay_cell_to_level(x, y)
+                if level is not None:
+                    self._apply_velocity_from_selector(level)
+            return
         # Bottom-right 4x4 in "grid" mode = resolution selector (overrides
         # pitch). Routed before the pitch path; shift gestures above already
         # returned, so this is "no shift" by elimination.
@@ -626,8 +655,15 @@ class MelodicStepSequencerComponent(Component):
                 for x in range(8):
                     self._set_grid_light(x, y, self._step_loop_color(x))
             return
+        overlay_active = self._velocity_overlay_should_show()
         grid_mode = self._bottom_right_mode == BOTTOM_RIGHT_MODE_GRID
         for y in range(PITCH_ROW_MIN, PITCH_ROW_MAX + 1):
+            # Velocity overlay claims rows 6 and 7 (full width) — skip the
+            # pitch render for those rows so writes don't fight. Overlay
+            # writes happen after the loop below.
+            if overlay_active and y in (
+                    VELOCITY_OVERLAY_ROW_TOP, VELOCITY_OVERLAY_ROW_BOTTOM):
+                continue
             pitch = self._pitch_for_row(y)
             for x in range(8):
                 if grid_mode and y >= 4 and x >= 4:
@@ -636,6 +672,8 @@ class MelodicStepSequencerComponent(Component):
                     continue
                 step = self._page_index * STEPS_PER_PAGE + x
                 self._set_grid_light(x, y, self._pitch_color(step, pitch, x))
+        if overlay_active:
+            self._render_velocity_overlay()
 
     def _step_loop_color(self, step):
         if not liveobj_valid(self._clip) and not self._selected_track_can_hold_midi():
@@ -970,6 +1008,85 @@ class MelodicStepSequencerComponent(Component):
                    grid=self._current_grid_label())
         self.update()
 
+    def _velocity_overlay_should_show(self):
+        """Overlay is active iff at least one held cell has a note AND device
+        shift is NOT held (shift gestures keep priority for rows 1..7)."""
+        if self._device_shift_held:
+            return False
+        for cell_info in self._held_note_cells.values():
+            if cell_info is None:
+                continue
+            step, pitch, _ = cell_info
+            if self._find_note_at_step_pitch(step, pitch) is not None:
+                return True
+        return False
+
+    def _velocity_overlay_cell_to_level(self, x, y):
+        """Cell (x in 0..7, y in {6, 7}) → level 1..16. Bottom row (y=7) =
+        levels 1..8; top row (y=6) = levels 9..16. None if out of range."""
+        if not 0 <= x <= 7:
+            return None
+        if y == VELOCITY_OVERLAY_ROW_BOTTOM:
+            return x + 1
+        if y == VELOCITY_OVERLAY_ROW_TOP:
+            return x + 9
+        return None
+
+    def _velocity_for_level(self, level):
+        return max(VELOCITY_MIN, min(VELOCITY_MAX, level * 8))
+
+    def _level_for_velocity(self, velocity):
+        return max(1, min(VELOCITY_OVERLAY_LEVELS, (int(velocity) + 7) // 8))
+
+    def _current_held_velocity(self):
+        """Velocity of the most-recently held note. Falls back to
+        DEFAULT_VELOCITY if no held cell currently resolves to a note."""
+        for _, cell_info in reversed(list(self._held_note_cells.items())):
+            if cell_info is None:
+                continue
+            step, pitch, _ = cell_info
+            note = self._find_note_at_step_pitch(step, pitch)
+            if note is not None:
+                return int(note.velocity)
+        return DEFAULT_VELOCITY
+
+    def _render_velocity_overlay(self):
+        """Write the 16-pad velocity bar into y=6 and y=7 (8 cells per row)."""
+        current = self._level_for_velocity(self._current_held_velocity())
+        for level in range(1, VELOCITY_OVERLAY_LEVELS + 1):
+            if level <= 8:
+                x = level - 1
+                y = VELOCITY_OVERLAY_ROW_BOTTOM
+            else:
+                x = level - 9
+                y = VELOCITY_OVERLAY_ROW_TOP
+            palette = (VELOCITY_LEVEL_PALETTE[level - 1] if level <= current
+                       else VELOCITY_LEVEL_DIM)
+            self._set_grid_light_palette(x, y, palette)
+
+    def _apply_velocity_from_selector(self, level):
+        """Set every held note's velocity to `level`'s value. Marks held cells
+        consumed so their release doesn't toggle the note. Emits
+        MELODIC_VELOCITY_CHANGED once."""
+        if not self.is_enabled() or not liveobj_valid(self._clip):
+            return
+        velocity = self._velocity_for_level(level)
+        modified = False
+        for cell, cell_info in list(self._held_note_cells.items()):
+            if cell_info is None:
+                continue
+            step, pitch, _ = cell_info
+            note = self._find_note_at_step_pitch(step, pitch)
+            if note is None:
+                continue
+            if int(note.velocity) != velocity:
+                self._replace_note_at(note, velocity=velocity)
+                modified = True
+            self._consumed_note_cells.add(cell)
+        if modified:
+            self._emit(Event.MELODIC_VELOCITY_CHANGED, velocity=velocity)
+        self.update()
+
     def _replace_note_at(self, note, **changes):
         """Remove a note (matched by start_time + pitch within a tight window)
         and re-add with attribute overrides. Mirrors the drum sequencer's
@@ -1083,6 +1200,21 @@ class MelodicStepSequencerComponent(Component):
         button = self._get_grid_button(x, y)
         if button is not None:
             self._send_programmer_pad_color(button, color)
+
+    def _set_grid_light_palette(self, x, y, palette_value):
+        """Same as `_set_grid_light` but takes a raw Launchpad palette index
+        (0-127) instead of a skin color name. Used by the velocity overlay,
+        which paints the bottom 2 rows from a 16-entry gradient rather than
+        a skin map."""
+        button = self._get_grid_button(x, y)
+        if button is None:
+            return
+        try:
+            note = button.original_identifier()
+            status = NOTE_ON_STATUS + PROGRAMMER_LED_CHANNEL
+            self.canonical_parent._send_midi((status, note, palette_value), optimized=False)
+        except Exception:
+            pass
 
     def _get_grid_button(self, x, y):
         try:

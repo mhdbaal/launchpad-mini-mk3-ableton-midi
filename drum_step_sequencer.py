@@ -10,7 +10,12 @@ from ableton.v2.control_surface.input_control_element import ScriptForwarding
 from novation.colors import CLIP_COLOR_TABLE, RGB_COLOR_TABLE
 
 from .events import Event
-from .palette import DRUM_SEQUENCER_COLOR_VALUES, send_pad_color
+from .palette import (
+    DRUM_SEQUENCER_COLOR_VALUES,
+    VELOCITY_LEVEL_DIM,
+    VELOCITY_LEVEL_PALETTE,
+    send_pad_color,
+)
 from .programmer_mode import (
     AUDITION_CHANNEL,
     NOTE_ON_STATUS,
@@ -88,6 +93,10 @@ NUDGE_BEAT_DELTA = 1.0 / 24
 # Velocity tier boundaries used by `_velocity_color_for`. Inclusive upper
 # bounds. The 4 tiers map to the StepVel* skin keys defined in skin.py.
 VELOCITY_TIER_BOUNDARIES = (31, 63, 95)
+# Step-hold velocity selector: 16 levels overlaid on the bottom-right 4x4
+# while at least one step pad is held with an existing note. Level → velocity
+# mapping is `level * 8` clamped to 1..127 (level 16 = peak = 127).
+VELOCITY_OVERLAY_LEVELS = 16
 
 
 class DrumStepSequencerComponent(Component):
@@ -413,6 +422,16 @@ class DrumStepSequencerComponent(Component):
         if not self.is_enabled():
             return
         if y >= 4 and x >= 4:
+            # Step-hold velocity selector wins over loop/grid rendering whenever
+            # a held step pad has a note (and shift isn't grabbing the surface
+            # for the loop-range picker). Selector "press" = apply velocity;
+            # "release" is a no-op (we don't want the overlay to ghost-toggle).
+            if self._velocity_overlay_should_show():
+                if value:
+                    level = self._velocity_overlay_cell_to_level(x, y)
+                    if level is not None:
+                        self._apply_velocity_from_selector(level)
+                return
             index = (y - 4) * 4 + (x - 4)
             if self._bottom_right_mode == BOTTOM_RIGHT_MODE_GRID:
                 self._handle_grid_cell_press(index, bool(value))
@@ -483,6 +502,81 @@ class DrumStepSequencerComponent(Component):
                     self._select_page(index)
             self.update()
 
+    def _velocity_overlay_should_show(self):
+        """Overlay is active iff at least one held step pad has a note AND
+        device shift is NOT held (shift gestures keep priority for the
+        bottom-right surface)."""
+        if self._device_shift_held:
+            return False
+        for note_start in self._held_step_pads.values():
+            if note_start is None:
+                continue
+            if self._find_note_at_time(note_start) is not None:
+                return True
+        return False
+
+    def _velocity_overlay_cell_to_level(self, x, y):
+        """Bottom-right cell (x in 4..7, y in 4..7) → level 1..16.
+        Bottom row (y=7) = levels 1..4; top row (y=4) = levels 13..16."""
+        if not (4 <= x <= 7 and 4 <= y <= 7):
+            return None
+        return (7 - y) * 4 + (x - 4) + 1
+
+    def _velocity_for_level(self, level):
+        """Map a level (1..16) → MIDI velocity. `level * 8` clamped to 1..127;
+        level 16 → 127."""
+        return max(VELOCITY_MIN, min(VELOCITY_MAX, level * 8))
+
+    def _level_for_velocity(self, velocity):
+        """Inverse of `_velocity_for_level` (used to size the lit bar)."""
+        return max(1, min(VELOCITY_OVERLAY_LEVELS, (int(velocity) + 7) // 8))
+
+    def _current_held_velocity(self):
+        """Velocity of the most-recently held note. Falls back to
+        DEFAULT_VELOCITY when no held note is currently resolvable."""
+        for _, note_start in reversed(list(self._held_step_pads.items())):
+            if note_start is None:
+                continue
+            note = self._find_note_at_time(note_start)
+            if note is not None:
+                return int(note.velocity)
+        return DEFAULT_VELOCITY
+
+    def _render_velocity_overlay(self):
+        """Write the 16-pad velocity bar into the bottom-right 4x4. Lit cells
+        use the cool→hot ramp from VELOCITY_LEVEL_PALETTE; cells above the
+        current level go dim."""
+        current = self._level_for_velocity(self._current_held_velocity())
+        for level in range(1, VELOCITY_OVERLAY_LEVELS + 1):
+            x = 4 + (level - 1) % 4
+            y = 7 - (level - 1) // 4
+            palette = (VELOCITY_LEVEL_PALETTE[level - 1] if level <= current
+                       else VELOCITY_LEVEL_DIM)
+            self._set_grid_light_palette(x, y, palette)
+
+    def _apply_velocity_from_selector(self, level):
+        """Set every held note's velocity to `level`'s value. Mirrors
+        `adjust_held_velocity` — marks the held step pads consumed so their
+        release doesn't toggle. Emits DRUM_VELOCITY_CHANGED once."""
+        if not self.is_enabled() or not liveobj_valid(self._clip):
+            return
+        velocity = self._velocity_for_level(level)
+        modified = False
+        for pad_step, note_start in list(self._held_step_pads.items()):
+            if note_start is None:
+                continue
+            note = self._find_note_at_time(note_start)
+            if note is None:
+                continue
+            if int(note.velocity) != velocity:
+                self._replace_note(note, velocity=velocity)
+                modified = True
+            self._consumed_step_pads.add(pad_step)
+        if modified:
+            self._emit(Event.DRUM_VELOCITY_CHANGED, velocity=velocity)
+        self._update_step_leds()
+        self._update_bottom_right_leds()
+
     def _handle_step_press(self, step, pressed):
         """Toggle a step OR perform a hold-gesture (length extension /
         arrow-driven edit). The toggle fires on RELEASE — pressing the pad
@@ -510,17 +604,20 @@ class DrumStepSequencerComponent(Component):
                 # note of its own to edit) so its release is recognized.
                 self._held_step_pads[step] = None
                 self._update_step_leds()
+                self._update_bottom_right_leds()
                 return
             # Multi-select OR plain anchor. Record the held pad with the
             # current note start_time (or None if empty).
             self._held_step_pads[step] = (target_note.start_time
                                           if target_has_note else None)
             self._update_step_leds()
+            self._update_bottom_right_leds()
         else:
             consumed = step in self._consumed_step_pads
             self._consumed_step_pads.discard(step)
             self._held_step_pads.pop(step, None)
             self._update_step_leds()
+            self._update_bottom_right_leds()
             if consumed:
                 return
             if self._ensure_clip():
@@ -947,6 +1044,9 @@ class DrumStepSequencerComponent(Component):
 
     def _update_bottom_right_leds(self):
         if self._grid_matrix is None:
+            return
+        if self._velocity_overlay_should_show():
+            self._render_velocity_overlay()
             return
         grid_mode = self._bottom_right_mode == BOTTOM_RIGHT_MODE_GRID
         for y in range(4):

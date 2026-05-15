@@ -88,6 +88,8 @@ _FORMATTERS = {
     Event.MELODIC_NAV_CHANGED:
         lambda p: "Melodic grid {} | page {} | octave {:+d} | semitone {:+d}".format(
             p["label"], p["page"], p["octave"], p["semitone"]),
+    Event.MELODIC_VELOCITY_CHANGED:
+        lambda p: "Velocity: {}".format(p["velocity"]),
     Event.MELODIC_NOTES_QUANTIZED:
         lambda p: ("Quantize: nothing to move ({})".format(p["grid"]) if p["count"] == 0
                    else "Quantize: {} note{} {} → {}".format(

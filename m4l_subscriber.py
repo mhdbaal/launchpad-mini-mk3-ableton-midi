@@ -75,6 +75,8 @@ _MAPPING = {
         lambda p: (Msg.MELODIC_PREVIEW, (int(bool(p["on"])),)),
     Event.MELODIC_NAV_CHANGED:
         lambda p: (Msg.MELODIC_NAV, (p["page"], p["octave"], p["semitone"])),
+    Event.MELODIC_VELOCITY_CHANGED:
+        lambda p: (Msg.MELODIC_VELOCITY, (p["velocity"],)),
 
     Event.ERR_NEED_MIDI_SLOT:
         lambda p: (Msg.ERR_NEED_MIDI_SLOT, (_ERR_MODE_IDS.get(p["mode"], 0),)),

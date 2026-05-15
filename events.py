@@ -47,6 +47,7 @@ class Event(object):
     MELODIC_NAV_CHANGED     = "melodic_nav_changed"     # label=str, page=int (1-based), octave=int, semitone=int
     MELODIC_NOTES_QUANTIZED = "melodic_notes_quantized" # count=int (notes moved), scope="selected"|"clip_all", grid=str
     MELODIC_BOTTOM_RIGHT_MODE = "melodic_bottom_right_mode" # mode="pitch"|"grid"
+    MELODIC_VELOCITY_CHANGED = "melodic_velocity_changed"   # velocity=int (1..127)
 
     # Errors (mode discriminates drum vs melodic)
     ERR_NEED_MIDI_SLOT      = "err_need_midi_slot"      # mode="drum"|"melodic"
