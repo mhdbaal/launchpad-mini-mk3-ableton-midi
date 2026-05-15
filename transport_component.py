@@ -8,9 +8,8 @@ from __future__ import absolute_import, print_function, unicode_literals
 from ableton.v2.base import listens
 from ableton.v2.control_surface import Component
 
+from .programmer_mode import MIDI_CC_STATUS, PROGRAMMER_LED_CHANNEL
 
-MIDI_CC_STATUS = 176
-PROGRAMMER_LED_CHANNEL = 0
 
 # Raw Launchpad palette indices (same values as Rgb.GREEN_HALF, GREEN, RED_HALF, RED).
 LED_PLAY_OFF = 27

@@ -10,6 +10,12 @@ from ableton.v2.control_surface.input_control_element import ScriptForwarding
 from novation.colors import CLIP_COLOR_TABLE, RGB_COLOR_TABLE
 
 from .events import Event
+from .palette import DRUM_SEQUENCER_COLOR_VALUES, send_pad_color
+from .programmer_mode import (
+    AUDITION_CHANNEL,
+    NOTE_ON_STATUS,
+    PROGRAMMER_LED_CHANNEL,
+)
 
 
 STEPS_PER_PAGE = 32
@@ -21,59 +27,7 @@ BOTTOM_RIGHT_SIZE = 16
 NOTE_SELECTOR_BASE_PITCH = 36
 MIN_PITCH_OFFSET = -36
 MAX_PITCH_OFFSET = 76
-PROGRAMMER_LED_CHANNEL = 0
-# Audition translations are sent on channel 1 (not 0). The translated pitches
-# for the drum-pad selector live in 36-51, which coincides with the
-# original_identifier of several OTHER pads in the matrix (e.g., the pad at
-# Excel A:4 has original note 51, the loop pads at E:5..H:5 have 45-48).
-# If both sat on channel 0, Live's forwarding registry — keyed by
-# (channel, identifier) — would collide and route the loop / step presses to
-# the drum buttons, playing a drum sound instead of selecting a page. Using a
-# different channel for audition makes those registry keys disjoint.
-# Channel 1 also matches DRUM_FEEDBACK_CHANNEL in launchpad_mini_mk3.py so the
-# drum-pad LED feedback round-trips through the same translation.
-PLAY_CHANNEL = 1
 DOUBLE_TAP_SECONDS = 0.35
-DRUM_SEQUENCER_COLOR_VALUES = {
-    "DefaultButton.Disabled": 0,
-    "DrumSequencer.StepEmpty": 51,
-    "DrumSequencer.StepBeat": 43,
-    "DrumSequencer.StepActive": 29,
-    "DrumSequencer.StepMuted": 84,
-    # Velocity tiers (cold → hot). Kept in sync with skin.py constants.
-    "DrumSequencer.StepVelGhost": 37,   # LIGHT_BLUE
-    "DrumSequencer.StepVelSoft": 29,    # MINT
-    "DrumSequencer.StepVelMedium": 96,  # AMBER
-    "DrumSequencer.StepVelLoud": 97,    # YELLOW
-    "DrumSequencer.StepHeld": 77,
-    "DrumSequencer.Playhead": 21,
-    "DrumSequencer.PlayheadActive": 3,
-    "DrumSequencer.NoDrumRack": 7,
-    "DrumSequencer.NoClip": 1,
-    "DrumSequencer.NoteEmpty": 1,
-    "DrumSequencer.NoteFilled": 43,
-    "DrumSequencer.NoteSelected": 96,
-    "DrumSequencer.Loop.Outside": 39,
-    "DrumSequencer.Loop.Inside": 37,
-    "DrumSequencer.Loop.Selected": 77,
-    "DrumSequencer.Loop.Playhead": 21,
-    "DrumSequencer.Loop.RangeEdit": 3,
-    "DrumSequencer.Control.Page": 43,
-    "DrumSequencer.Control.Octave": 21,
-    "DrumSequencer.Control.Semitone": 29,
-    "DrumSequencer.Control.Grid": 11,
-    "DrumSequencer.Control.GridSelected": 3,
-    "DrumSequencer.Control.Reset": 84,
-    "DrumSequencer.Control.Shift": 96,
-    "DrumSequencer.Control.CaptureMidi": 27,        # GREEN_HALF (dim until capturable)
-    "DrumSequencer.Control.CaptureMidiReady": 21,   # GREEN
-    "DrumSequencer.Control.Quantize": 77,           # AQUA
-    "DrumSequencer.Control.CycleLoop": 77,          # AQUA (bottom-right = loop)
-    "DrumSequencer.Control.CycleGrid": 9,           # ORANGE (bottom-right = grid)
-    "DrumSequencer.Control.GridTernary": 53,        # PURPLE (ternary cells dim)
-}
-
-
 # Step-grid resolutions. 16 values laid out across the bottom-right 4x4 when
 # the cycle button (slot 6) is in "grid" mode. Layout (row 0 = top of the
 # 4x4, row 3 = bottom; index = (y-4)*4 + (x-4)):
@@ -1084,9 +1038,8 @@ class DrumStepSequencerComponent(Component):
                     button.use_default_message()
                     button.script_forwarding = ScriptForwarding.exclusive
         # Bottom-LEFT drum-pad selector — 16 cells, each translated to its
-        # drum pitch on channel 1 (PLAY_CHANNEL). The grid (top 4x8) and
-        # bottom-right loop selector use default identifiers and don't
-        # forward notes to Live.
+        # drum pitch on AUDITION_CHANNEL. The grid (top 4x8) and bottom-right
+        # loop selector use default identifiers and don't forward notes to Live.
         for y in range(4):
             for x in range(4):
                 pitch = self._pitch_for_note_button(x, y)
@@ -1108,7 +1061,7 @@ class DrumStepSequencerComponent(Component):
         button = self._get_grid_button(x, y)
         if button is not None:
             button.set_identifier(pitch)
-            button.set_channel(PLAY_CHANNEL if channel is None else channel)
+            button.set_channel(AUDITION_CHANNEL if channel is None else channel)
             button.script_forwarding = ScriptForwarding.non_consuming
 
     def _make_control_button_listener(self, index):
@@ -1331,7 +1284,7 @@ class DrumStepSequencerComponent(Component):
             return
         try:
             note = button.original_identifier()
-            status = 144 + PROGRAMMER_LED_CHANNEL
+            status = NOTE_ON_STATUS + PROGRAMMER_LED_CHANNEL
             self.canonical_parent._send_midi((status, note, palette_value), optimized=False)
         except Exception:
             pass
@@ -1362,16 +1315,8 @@ class DrumStepSequencerComponent(Component):
             pass
 
     def _send_programmer_pad_color(self, button, color):
-        color_value = DRUM_SEQUENCER_COLOR_VALUES.get(color, 0)
-        note = button.original_identifier()
-        status = 144 + PROGRAMMER_LED_CHANNEL
-        try:
-            self.canonical_parent._send_midi((status, note, color_value), optimized=False)
-            if self._led_debug_count < 8:
-                self._log("led send: note={}, value={}".format(note, color_value))
-                self._led_debug_count += 1
-        except Exception:
-            try:
-                button.send_value(color_value, force=True, channel=PROGRAMMER_LED_CHANNEL)
-            except Exception:
-                pass
+        note, color_value = send_pad_color(
+            self.canonical_parent, button, color, DRUM_SEQUENCER_COLOR_VALUES)
+        if self._led_debug_count < 8:
+            self._log("led send: note={}, value={}".format(note, color_value))
+            self._led_debug_count += 1

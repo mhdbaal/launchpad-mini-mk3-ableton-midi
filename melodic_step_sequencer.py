@@ -8,6 +8,8 @@ from ableton.v2.control_surface import Component
 from ableton.v2.control_surface.input_control_element import ScriptForwarding
 
 from .events import Event
+from .palette import MELODIC_COLOR_VALUES, send_pad_color
+from .programmer_mode import AUDITION_CHANNEL
 
 
 STEPS_PER_PAGE = 8
@@ -15,7 +17,6 @@ STEPS_PER_PAGE = 8
 # so the user can switch the step-grid resolution (1/4 .. 1/32) at runtime.
 DEFAULT_VELOCITY = 100
 DEFAULT_CLIP_PAGES = 8
-PROGRAMMER_LED_CHANNEL = 0
 DOUBLE_TAP_SECONDS = 0.35
 BASE_PITCH = 60
 MIN_PITCH_OFFSET = -60
@@ -101,45 +102,6 @@ BOTTOM_RIGHT_MODE_PITCH = "pitch"
 BOTTOM_RIGHT_MODE_GRID = "grid"
 
 DEFAULT_STEP_LENGTH = GRID_OPTIONS[DEFAULT_GRID_INDEX][0]  # 1/16
-
-MELODIC_COLOR_VALUES = {
-    "DefaultButton.Disabled": 0,
-    "MelodicSequencer.StepEmpty": 51,
-    "MelodicSequencer.StepBeat": 43,
-    "MelodicSequencer.StepActive": 29,
-    # Velocity tiers (in sync with skin.py). 4 ranges, cold → hot.
-    "MelodicSequencer.StepVelGhost": 37,    # LIGHT_BLUE
-    "MelodicSequencer.StepVelSoft": 29,     # MINT
-    "MelodicSequencer.StepVelMedium": 96,   # AMBER
-    "MelodicSequencer.StepVelLoud": 97,     # YELLOW
-    "MelodicSequencer.Root": 96,
-    "MelodicSequencer.Playhead": 21,
-    "MelodicSequencer.PlayheadActive": 3,
-    "MelodicSequencer.NoClip": 1,
-    "MelodicSequencer.Loop.Outside": 1,
-    "MelodicSequencer.Loop.Inside": 43,
-    "MelodicSequencer.Loop.Selected": 96,
-    "MelodicSequencer.Loop.Playhead": 21,
-    "MelodicSequencer.Loop.RangeEdit": 1,
-    "MelodicSequencer.Preview.Off": 41,
-    "MelodicSequencer.Preview.On": 96,
-    "MelodicSequencer.Control.Page": 43,
-    "MelodicSequencer.Control.Octave": 21,
-    "MelodicSequencer.Control.Semitone": 29,
-    "MelodicSequencer.Control.Grid": 11,
-    "MelodicSequencer.Control.GridSelected": 3,
-    "MelodicSequencer.Control.ScaleCycle": 77,
-    "MelodicSequencer.Control.Reset": 84,
-    "MelodicSequencer.Control.Shift": 96,
-    "MelodicSequencer.Control.CaptureMidi": 27,
-    "MelodicSequencer.Control.CaptureMidiReady": 21,
-    "MelodicSequencer.Control.Quantize": 77,
-    "MelodicSequencer.Control.CycleLoop": 77,           # AQUA (default pitch mode)
-    "MelodicSequencer.Control.CycleGrid": 9,            # ORANGE (grid resolution mode)
-    "MelodicSequencer.Control.GridTernary": 53,         # PURPLE (ternary cells dim)
-    "MelodicSequencer.StepHeld": 96,
-}
-
 
 class MelodicStepSequencerComponent(Component):
     """Launchpad95-style melodic step sequencer: 7 pitch rows + 1 page row."""
@@ -793,11 +755,11 @@ class MelodicStepSequencerComponent(Component):
     def _update_audition_translations(self):
         if self._grid_matrix is None or not self.is_enabled():
             return
-        # Audition on channel 1 (not 0). Translated pitches collide on the
-        # forwarding registry with original_identifier values of OTHER pads
-        # in the matrix when both sit on channel 0; using a distinct channel
-        # makes (channel, identifier) keys disjoint. See the same fix in
-        # drum_step_sequencer.py (PLAY_CHANNEL=1).
+        # Audition on AUDITION_CHANNEL (=1, not 0). Translated pitches collide
+        # on the forwarding registry with original_identifier values of OTHER
+        # pads in the matrix when both sit on channel 0; using a distinct
+        # channel makes (channel, identifier) keys disjoint. Same fix as
+        # drum_step_sequencer.py.
         # First reset every pad so a previous translation can't leak (e.g.,
         # row 0 was previously translated as a pitch row, but the user just
         # held shift and we want it to act as the page selector now).
@@ -820,7 +782,7 @@ class MelodicStepSequencerComponent(Component):
                 button = self._get_grid_button(x, y)
                 if button is not None:
                     button.set_identifier(pitch)
-                    button.set_channel(1)
+                    button.set_channel(AUDITION_CHANNEL)
                     button.script_forwarding = ScriptForwarding.non_consuming
         self._request_midi_map_rebuild()
 
@@ -1148,16 +1110,8 @@ class MelodicStepSequencerComponent(Component):
             pass
 
     def _send_programmer_pad_color(self, button, color):
-        color_value = MELODIC_COLOR_VALUES.get(color, 0)
-        note = button.original_identifier()
-        status = 144 + PROGRAMMER_LED_CHANNEL
-        try:
-            self.canonical_parent._send_midi((status, note, color_value), optimized=False)
-            if self._led_debug_count < 8:
-                self._log("led send: note={}, value={}".format(note, color_value))
-                self._led_debug_count += 1
-        except Exception:
-            try:
-                button.send_value(color_value, force=True, channel=PROGRAMMER_LED_CHANNEL)
-            except Exception:
-                pass
+        note, color_value = send_pad_color(
+            self.canonical_parent, button, color, MELODIC_COLOR_VALUES)
+        if self._led_debug_count < 8:
+            self._log("led send: note={}, value={}".format(note, color_value))
+            self._led_debug_count += 1

@@ -8,9 +8,35 @@ from ableton.v2.control_surface.mode import AddLayerMode, ModesComponent
 from novation import sysex
 from novation.novation_base import NovationBase
 from novation.session_modes import SessionModesComponent
-from . import sysex_ids as ids
 from .channel_strip_with_arm_toggle import ChannelStripComponentWithArmToggle
 from .clip_copy_component import ClipCopyComponent
+from .device_profile import (
+    DEVICE_FAMILY_CODE,
+    DEVICE_SYSEX_ID,
+    DOWN_BUTTON_CC,
+    DRUMS_BUTTON_CC,
+    EXTERNAL_FEEDBACK_ON,
+    INTERNAL_FEEDBACK_OFF,
+    KEYS_BUTTON_CC,
+    LED_ARROW_OCTAVE,
+    LED_ARROW_SEMITONE,
+    LED_FEEDBACK_COMMAND_BYTE,
+    LED_MELODIC,
+    LED_OFF,
+    LED_SEQUENCER,
+    LED_SESSION,
+    LED_SESSION_DIM,
+    LEFT_BUTTON_CC,
+    PROGRAMMER_MODE_COMMAND_BYTE,
+    PROGRAMMER_MODE_OFF,
+    PROGRAMMER_MODE_ON,
+    RIGHT_BUTTON_CC,
+    SESSION_BUTTON_CC,
+    SLEEP_COMMAND_BYTE,
+    SLEEP_OFF,
+    UP_BUTTON_CC,
+    USER_BUTTON_CC,
+)
 from .drum_step_sequencer import DrumStepSequencerComponent
 from .melodic_step_sequencer import MelodicStepSequencerComponent
 from .scene_copy_component import SceneCopyComponent
@@ -20,38 +46,13 @@ from .events import Event
 from .m4l_subscriber import M4LSubscriber
 from .notification_dispatcher import NotificationDispatcher
 from .notifying_background import NotifyingBackgroundComponent
+from .programmer_mode import AUDITION_CHANNEL, MIDI_CC_STATUS, PROGRAMMER_LED_CHANNEL
 from .session_with_copy import SessionComponentWithCopy
 from .skin import skin
 from .status_bar_subscriber import StatusBarSubscriber
 from .transport_component import TransportComponent
 
 
-DRUM_FEEDBACK_CHANNEL = 1
-PROGRAMMER_MODE_COMMAND_BYTE = 14
-PROGRAMMER_MODE_ON = 1
-PROGRAMMER_MODE_OFF = 0
-LED_FEEDBACK_COMMAND_BYTE = 10
-INTERNAL_FEEDBACK_OFF = 0
-EXTERNAL_FEEDBACK_ON = 1
-SLEEP_COMMAND_BYTE = 9
-SLEEP_OFF = 1
-MIDI_CC_STATUS = 176
-PROGRAMMER_LED_CHANNEL = 0
-SESSION_BUTTON_CC = 95
-DRUMS_BUTTON_CC = 96
-KEYS_BUTTON_CC = 97
-USER_BUTTON_CC = 98
-UP_BUTTON_CC = 91
-DOWN_BUTTON_CC = 92
-LEFT_BUTTON_CC = 93
-RIGHT_BUTTON_CC = 94
-LED_OFF = 0
-LED_SESSION = 21
-LED_SESSION_DIM = 27  # GREEN_HALF — "session button is available, press to switch"
-LED_SEQUENCER = 96
-LED_MELODIC = 41
-LED_ARROW_OCTAVE = 27   # GREEN_HALF, matches Control.Octave skin
-LED_ARROW_SEMITONE = 29  # MINT, matches Control.Semitone skin
 # A press shorter than this on the shift button (slot 7 / stop-solo-mute /
 # scene_launch_buttons_raw[7]) qualifies as a "quick tap". Two such taps
 # within SHIFT_DOUBLE_TAP_WINDOW (measured release-to-release) toggle the
@@ -69,7 +70,7 @@ DRUM_VELOCITY_ARROW_STEP = 8
 
 
 class Launchpad_Mini_MK3(NovationBase):
-    model_family_code = ids.LP_MINI_MK3_FAMILY_CODE
+    model_family_code = DEVICE_FAMILY_CODE
     element_class = Elements
     session_class = SessionComponentWithCopy
     channel_strip_class = ChannelStripComponentWithArmToggle
@@ -105,7 +106,7 @@ class Launchpad_Mini_MK3(NovationBase):
 
     def on_identified(self, midi_bytes):
         self._enter_programmer_mode()
-        self.set_feedback_channels([DRUM_FEEDBACK_CHANNEL])
+        self.set_feedback_channels([AUDITION_CHANNEL])
         super(Launchpad_Mini_MK3, self).on_identified(midi_bytes)
 
     def disconnect(self):
@@ -532,7 +533,7 @@ class Launchpad_Mini_MK3(NovationBase):
 
     def _send_launchpad_sysex(self, command_byte, *payload):
         try:
-            self._send_midi(sysex.STD_MSG_HEADER + (ids.LP_MINI_MK3_ID, command_byte) + tuple(payload) + (sysex.SYSEX_END_BYTE,))
+            self._send_midi(sysex.STD_MSG_HEADER + (DEVICE_SYSEX_ID, command_byte) + tuple(payload) + (sysex.SYSEX_END_BYTE,))
         except Exception:
             pass
 
