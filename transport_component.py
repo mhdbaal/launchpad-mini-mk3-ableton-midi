@@ -34,6 +34,12 @@ class TransportComponent(Component):
         self._record_button = None
         self._play_listener = None
         self._record_listener = None
+        # Optional shift-combo plumbing (Pro MK3): with both a shift button
+        # and a capture handler set, shift+Record fires the handler (Capture
+        # MIDI) instead of toggling session record. The Mini leaves these
+        # unset — behavior unchanged.
+        self._shift_button = None
+        self._capture_handler = None
         self._on_is_playing_changed.subject = self.song
         self._on_session_record_changed.subject = self.song
 
@@ -79,8 +85,22 @@ class TransportComponent(Component):
         else:
             self.song.start_playing()
 
+    def set_shift_button(self, button):
+        """Optional: plumb a shift button for the shift+Record combo."""
+        self._shift_button = button
+
+    def set_capture_handler(self, handler):
+        """Optional: callable fired by shift+Record (Capture MIDI)."""
+        self._capture_handler = handler
+
     def _on_record_pressed(self, value):
         if not self.is_enabled() or not value:
+            return
+        if (self._capture_handler is not None
+                and self._shift_button is not None
+                and self._shift_button.is_pressed()):
+            self._log("record pressed with shift -> capture")
+            self._capture_handler()
             return
         self._log("record pressed")
         self.song.session_record = not self.song.session_record

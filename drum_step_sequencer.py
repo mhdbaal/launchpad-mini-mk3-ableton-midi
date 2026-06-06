@@ -1973,9 +1973,11 @@ class DrumStepSequencerComponent(Component):
         the mode — the button itself selects it. Pressing the other button
         while one is already held just switches the live mode.
         """
-        if mode not in ("delete", "duplicate") or not self.is_enabled():
+        if mode not in ("delete", "duplicate"):
             return
         if held:
+            if not self.is_enabled():
+                return
             self._special_shift_mode = mode
             if self._special_shift_held:
                 self.update()
@@ -1983,7 +1985,17 @@ class DrumStepSequencerComponent(Component):
                 self._enter_special_shift()
                 self._special_shift_external = True
         elif self._special_shift_held and self._special_shift_mode == mode:
-            self._exit_special_shift()
+            if self.is_enabled():
+                self._exit_special_shift()
+            else:
+                # Main mode changed mid-hold — drop the state silently so
+                # the next engagement starts clean (no LED writes while
+                # another component owns the scene buttons).
+                self._special_shift_held = False
+                self._special_shift_press_time = None
+                self._special_shift_external = False
+                self._special_shift_action_performed = False
+                self._duplicate_source = None
 
     def _set_grid_option(self, index):
         """Select a grid resolution from `GRID_OPTIONS` (0..15). No-op when
