@@ -164,6 +164,7 @@ class Launchpad_Pro_MK3(NovationBase):
         self._native_passthrough_active = False
         self._passthrough_armed = False
         self._passthrough_poll_task = None
+        self._last_layout_readback = None
         # Notification plumbing — created early so components can take the
         # bus reference at construction time. _event_bus = None would make
         # every _emit() a no-op (kill switch).
@@ -174,6 +175,13 @@ class Launchpad_Pro_MK3(NovationBase):
         (super(Launchpad_Pro_MK3, self).__init__)(*a, **k)
 
     def on_identified(self, midi_bytes):
+        # A re-identify means the connection was rebuilt (MIDI prefs
+        # touched, USB replug). If it fires mid-passthrough, Programmer
+        # mode is about to be re-entered below — leave native land
+        # cleanly instead of going zombie (mode stuck on
+        # native_passthrough with every component disabled).
+        if self._native_passthrough_active:
+            self._exit_native_passthrough()
         self._enter_programmer_mode()
         self.set_feedback_channels([AUDITION_CHANNEL])
         super(Launchpad_Pro_MK3, self).on_identified(midi_bytes)
@@ -235,10 +243,15 @@ class Launchpad_Pro_MK3(NovationBase):
         # device's spontaneous layout notifications go to the DAW port;
         # this listener catches the responses to our enquiry poll).
         self._Launchpad_Pro_MK3__on_layout_switch_value.subject = self._elements.layout_switch
-        # Poll task lives on the background component (always enabled).
-        self._passthrough_poll_task = self._background._tasks.add(
-            task.sequence(task.wait(PASSTHROUGH_POLL_INTERVAL),
-                          task.run(self._poll_native_layout)))
+        # Poll task lives on the control surface's own task group (a
+        # component group pauses with its component). task.loop re-arms
+        # the wait→enquire cycle by itself — restarting a plain sequence
+        # from INSIDE its own task.run step does not survive (the
+        # FuncTask kills itself right after running, clobbering the
+        # restart), which capped the Session-reclaim window at one poll.
+        self._passthrough_poll_task = self._tasks.add(
+            task.loop(task.sequence(task.wait(PASSTHROUGH_POLL_INTERVAL),
+                                    task.run(self._poll_native_layout))))
         self._passthrough_poll_task.kill()
         self._Launchpad_Pro_MK3__on_record_arm_button_value.subject = self._elements.record_arm_button
         self._Launchpad_Pro_MK3__on_mute_button_value.subject = self._elements.mute_button
@@ -492,6 +505,18 @@ class Launchpad_Pro_MK3(NovationBase):
 
     @listens("selected_mode")
     def __on_main_mode_changed(self, mode):
+        if mode != NATIVE_PASSTHROUGH_MODE and self._native_passthrough_active:
+            # Leaving the passthrough through a side door (mode panel
+            # pick, picker toggle...) — stop the poll and reclaim
+            # Programmer mode so the new mode actually renders, and so
+            # the native mode buttons work again (_enter_native_passthrough
+            # early-returns while the flag is set).
+            self._log("native passthrough: reclaimed by mode change")
+            self._native_passthrough_active = False
+            self._passthrough_armed = False
+            if self._passthrough_poll_task is not None:
+                self._passthrough_poll_task.kill()
+            self._enter_programmer_mode()
         grid_takeover = mode in _SEQUENCER_MODES or mode in (
             MODE_PICKER_MODE, NATIVE_PASSTHROUGH_MODE)
         self._log("main mode changed: {}".format(mode))
@@ -603,7 +628,11 @@ class Launchpad_Pro_MK3(NovationBase):
                                               or "session")
             self._picker_return_mode = None
             return
-        self._picker_return_mode = current
+        # Never return INTO the passthrough — re-selecting that mode
+        # would not re-send the native layout SysEx (deaf zombie state).
+        self._picker_return_mode = (current
+                                    if current != NATIVE_PASSTHROUGH_MODE
+                                    else "session")
         self._main_modes.selected_mode = MODE_PICKER_MODE
 
     @listens("value")
@@ -641,6 +670,7 @@ class Launchpad_Pro_MK3(NovationBase):
         self._log("native passthrough: enter (layout={})".format(layout_bytes))
         self._native_passthrough_active = True
         self._passthrough_armed = False
+        self._last_layout_readback = None
         self._main_modes.selected_mode = NATIVE_PASSTHROUGH_MODE
         self._send_launchpad_sysex(PROGRAMMER_MODE_COMMAND_BYTE, PROGRAMMER_MODE_OFF)
         self._elements.firmware_mode_switch.send_value(sysex.DAW_MODE_BYTE)
@@ -662,21 +692,24 @@ class Launchpad_Pro_MK3(NovationBase):
     def _poll_native_layout(self):
         """Ask the device which layout it's in (the spontaneous
         notifications go to the DAW port we're not bound to). The answer
-        lands in __on_layout_switch_value. Re-arms itself while the
-        passthrough is active."""
+        lands in __on_layout_switch_value. The task.loop wrapper re-arms
+        the cycle; entry/exit restart/kill it from outside."""
         if not self._native_passthrough_active:
+            if self._passthrough_poll_task is not None:
+                self._passthrough_poll_task.kill()
             return
         try:
             self._elements.layout_switch.enquire_value()
         except Exception:
             pass
-        if self._passthrough_poll_task is not None:
-            self._passthrough_poll_task.restart()
 
     @listens("value")
     def __on_layout_switch_value(self, value):
         layout = tuple(value) if isinstance(value, (tuple, list)) else (value,)
-        self._log("layout read-back: {}".format(layout))
+        # The poll answers every 0.8s — only log layout CHANGES.
+        if layout != self._last_layout_readback:
+            self._last_layout_readback = layout
+            self._log("layout read-back: {}".format(layout))
         if not self._native_passthrough_active:
             return
         if layout == tuple(ids.SESSION_LAYOUT_BYTES):
