@@ -4,7 +4,7 @@ Internal reference. Read `README.md` first for the feature tour — this file fo
 
 ## What this is
 
-Custom Ableton Live 12 MIDI Remote Script for the **Novation Launchpad Mini MK3**. Replaces the factory `Launchpad_Mini_MK3` script (decompiled copy under `midi-remote-scripts/Launchpad_Mini_MK3/` for reference) and adds:
+Custom Ableton Live 12 MIDI Remote Scripts for the **Novation Launchpad Mini MK3** and **Launchpad Pro MK3** — a shared component core + per-device overlays (see [Repo layout](#repo-layout--overlay-assembly)). The Mini script replaces the factory `Launchpad_Mini_MK3` script (decompiled copies of both factory scripts under `midi-remote-scripts/` for reference) and adds:
 
 - 4-mode bottom row (Select/Arm, Stop, Solo, Mute) cycled by the bottom-right scene button (the "shift" button)
 - clip and scene copy-paste while shift is held
@@ -41,16 +41,22 @@ Three nested layers run simultaneously:
 - sequencer modes: modifier. While "effective" (held or locked), shift-gated controls render lit and accept input — grid-resolution slots 0-3, triplet slot 4, and (melodic only) the top row (page selector + preview toggle). Otherwise `DefaultButton.Disabled` and presses ignored. Each sequencer exposes `set_device_shift_held(bool)`.
 - **shift lock** (sequencer modes only): double-tap toggles sticky `_shift_locked`. Same release-to-release timing as the session-mode edit-entry detection; the discriminator is `_main_modes.selected_mode`. Long press resets the detector. Clipboards still clear on physical release. Feedback: `show_message` + slot 7 LED lights `Control.Shift` (AMBER) while effective.
 
+## Repo layout — overlay assembly
+
+Shared `.py` files live at the **repo root**; device-specific modules live in `mini/` and `pro/` under the **same module names** (`__init__.py`, `device_profile.py`, `sysex_ids.py`, `elements.py`, + the wiring file). `install.sh` assembles root + overlay **flat** into each device's MIDI Remote Scripts folder, so every relative import (`from .x import y`) resolves unchanged. Consequence: a shared component MAY `from .device_profile import X` — the assembly injects the right device's file at install time. **Never install a sub-folder directly** (imports would break); never let a basename exist both at root and in an overlay (install.sh refuses).
+
 ## File map
 
 | File | Responsibility |
 |------|---------------|
-| `__init__.py` | Capabilities, port declarations, `create_instance`. |
-| `launchpad_mini_mk3.py` | Top-level `NovationBase`. Owns modes, wiring, Programmer-mode SysEx, mode-button LEDs. |
-| `elements.py` | Hardware layer. Adds `drums_mode_button`/`keys_mode_button`/`user_mode_button` + `Session_Button_Color_Element`. |
-| `skin.py` | Skin: `Mode.Session.*`, `Mixer.TrackSelected`, full `DrumSequencer.*` / `MelodicSequencer.*` palettes. Merged via `merge_skins`. |
-| `sysex_ids.py` | `LP_MINI_MK3_FAMILY_CODE = (19, 1)`, `LP_MINI_MK3_ID = 13`. |
-| `device_profile.py` | **Mini-MK3-specific seam.** USB vendor/product, SysEx command bytes (Programmer mode entry, LED feedback, sleep), mode/arrow button CCs, and mode-button LED palette indices. Swap this file wholesale when porting to another Launchpad. |
+| `mini/__init__.py` · `pro/__init__.py` | Capabilities, port declarations, `create_instance`. Mini: 2 port pairs. Pro: 3 pairs (bind the SCRIPT pair). |
+| `mini/launchpad_mini_mk3.py` | Top-level `NovationBase` (Mini). Owns modes, wiring, Programmer-mode SysEx, mode-button LEDs. |
+| `pro/launchpad_pro_mk3.py` | Top-level `NovationBase` (Pro). Native-UX wiring: dedicated buttons replace the Mini's hold/double-tap workarounds (see [Launchpad Pro MK3 package](#launchpad-pro-mk3-package)). |
+| `mini/elements.py` | Mini hardware layer. Adds `drums_mode_button`/`keys_mode_button`/`user_mode_button` + `Session_Button_Color_Element`. |
+| `pro/elements.py` | Pro hardware layer. Arrows (80/70/91/92), Session 93, dedicated Shift/Clear/Duplicate/Quantise/Play/Record + function row CC 1-8 + track-select row CC 101-108. No faders/print-to-clip in v1. |
+| `skin.py` | Skin: `Mode.Session.*`, `Mixer.TrackSelected`, full `DrumSequencer.*` / `MelodicSequencer.*` palettes. Merged via `merge_skins`. Shared by both devices. |
+| `mini/sysex_ids.py` · `pro/sysex_ids.py` | Mini: family (19,1), id 13. Pro: family (35,1), id 14 + layout bytes. |
+| `mini/device_profile.py` · `pro/device_profile.py` | **Device-specific seam.** USB vendor/product, SysEx command bytes (Programmer mode entry, LED feedback, sleep), button CCs, LED palette indices. Same public symbol names on both — swap wholesale when porting. |
 | `programmer_mode.py` | Novation-wide Programmer-mode MIDI conventions: `NOTE_ON_STATUS`, `MIDI_CC_STATUS`, `PROGRAMMER_LED_CHANNEL`, `AUDITION_CHANNEL`. Same on Mini MK3 / X / Pro MK3. |
 | `palette.py` | Shared `DRUM_SEQUENCER_COLOR_VALUES` / `MELODIC_COLOR_VALUES` dicts + `send_pad_color()` helper. Indices 0-127 are the Launchpad firmware palette, identical across models. |
 | `channel_strip_with_arm_toggle.py` | Click unselected → select; click selected → toggle arm. Honors `song.exclusive_arm`. |
@@ -69,7 +75,7 @@ Three nested layers run simultaneously:
 | `status_bar_subscriber.py` | Single owner of every user-visible `show_message` wording (`_FORMATTERS` table). |
 | `m4l_subscriber.py` | Maps events to `(msg_id, args)`, forwards to dispatcher. No-op without LP Notify device. |
 | `notification_dispatcher.py` | Discovers LP Notify device on any track, binds params by name, writes `msg_id/arg1-3/seq` on `send()`. |
-| `install.sh` | WSL→Windows install. Paths hard-coded for `mahed`'s machine. |
+| `install.sh` | WSL→Windows install, `--mini` / `--pro` / `--all` (default). Assembles root + overlay flat per device; refuses on root∩overlay basename collision. Paths hard-coded for `mahed`'s machine. |
 
 ## Key subsystems
 
@@ -258,21 +264,53 @@ Components never call `show_message` directly — they emit semantic events on a
 - **Decompiled source uses Python 3.7 conventions** (`from __future__`, old-style `super()`). Match that style for files originating from Live bundle; new files don't have to.
 - **`support_momentary_mode_cycling=False`** on `_stop_solo_mute_modes` is what makes shift cycle vs hold work. Don't flip it.
 
+## Launchpad Pro MK3 package
+
+`pro/` is a native-UX port of the Mini script: same Programmer-mode takeover, same shared components, but the Mini's button-scarcity workarounds are deleted from the wiring (no User hold-to-select, no double-tap edit entry, no shift lock, no stop-solo-mute tap-cycle, no `_seq_shift_button`). Active main modes mirror the Mini's ergonomic pass: `session` / `drum_sequence` / `melodic_sequence` (chord + drum variants constructed but unreachable).
+
+**Button map** (session · sequencer):
+
+| Button (CC) | Session | Sequencer modes |
+|---|---|---|
+| 8×8 grid | clips, **all 8 rows** (no bottom-row sacrifice) | step grid / selectors (unchanged) |
+| Scenes 89→19 | **all 8 launch scenes** (slot 7 freed) | slot 4 = Cycle; slots 0-3/5/6 disabled via `configure_slots` (free for future) |
+| Shift (90) | hold + clip/scene = copy/paste | `set_device_shift_held` (grid resolutions, triplets, melodic row 0) |
+| Clear (60) | hold + tap = delete | hold = `set_action_modifier("delete")` (drum) |
+| Duplicate (50) | hold + tap = duplicate | hold = action-modifier duplicate; Shift+Duplicate = `double_loop()` |
+| Quantise (40) | reserved v1 | `quantize_selected()` |
+| Play (20) / Record (10) | transport; Shift+Record = Capture MIDI (everywhere) | idem |
+| RecArm/Mute/Solo/StopClip (1/2/3/8) | toggle track-row mode (arm/mute/solo/stop); Shift+ = Undo/Redo/—/Stop All (all modes) | combos only |
+| Track row (101-108) | track select (arm-on-2nd-press) or selected role | inert |
+| Session (93) | launch/overview (double-click = overview) | preview-hold; Shift+Session = toggle pin |
+| Note (94) / Sequencer (97) | switch to melodic / drum (press active mode's button → back to session) | idem |
+| Arrows (80/70 ↑↓, 91/92 ←→) | session navigation | same roles as Mini (velocity/pitch/nudge/pages) |
+
+Inert in v1 (LED dark, swallowed by background): Chord (95), Custom (96), Projects (98), Fixed Length (30), Volume/Pan/Sends/Device (4-7 — button faders need the DAW fader layout). Planned extension pattern for drum variants + chord: **Shift+Sequencer → grid overlay panel**, one pad per variant.
+
+**Pro-specific wiring patterns**: `EditModeComponent` runs **standalone** (`set_standalone(True)`, always enabled in session; `is_active()` = modifier held, so bare presses still launch). Dedicated buttons use direct value listeners + raw CC LEDs (`_update_modifier_leds` / `_update_mixer_function_leds`) — the same pattern as the Mini's transport, no Layer competition. The track-row mixer modes are a plain `ModesComponent` whose `selected_mode` is set by the function-button listeners (shift-combo checked first).
+
+**Hardware bytes still to validate on device** (suspect these first if something is dark):
+1. Programmer-mode entry `F0 00 20 29 02 0E 0E 01 F7` — if grid LEDs don't respond to Note On ch 0, this is wrong.
+2. Live preferences must bind the **3rd port pair** (`MIDIIN3/MIDIOUT3 (LPProMK3 MIDI)` on Windows). Wrong pair = clips work, LEDs dark.
+3. LED writes on CC 101-108 / CC 1-8 (`B0 65 05` test).
+4. Feedback (cmd 10) / sleep (cmd 9) commands — assumed Novation-wide; harmless if ignored, remove from `_enter_programmer_mode` if they cause trouble.
+5. Setup button behavior (must not silently exit Programmer mode).
+
 ## Porting to other Launchpads
 
-Device-specific hardware bytes are isolated behind three seams:
-- `device_profile.py` — Mini-MK3-specific. Replace wholesale (USB IDs, SysEx command bytes, mode/arrow CCs, mode-button LED indices).
+Device-specific hardware bytes are isolated behind the overlay seams (see [Repo layout](#repo-layout--overlay-assembly)):
+- `mini/device_profile.py` · `pro/device_profile.py` — replace wholesale (USB IDs, SysEx command bytes, button CCs, LED indices). Keep the same public symbol names.
 - `programmer_mode.py` — Novation-wide (status bytes, LED + audition channels). Same on Mini MK3 / X / Pro MK3.
 - `palette.py` — shared color dicts + `send_pad_color()` helper. Palette indices 0-127 are firmware-standard across the Launchpad family.
 
-`elements.py` is decompiled from Ableton's bundle and will need its own per-device replacement when forking. The shift-as-`scene_launch_buttons_raw[7]` overload (`_create_stop_solo_mute_modes`) is a Mini-MK3 UX choice — Pro MK3 has a dedicated Shift button and would wire differently.
+Adding a device = new overlay dir (5 files: `__init__.py`, `sysex_ids.py`, `device_profile.py`, `elements.py`, wiring) + an `install_device` line in `install.sh`. `pro/` is the reference port; the diff between `mini/launchpad_mini_mk3.py` and `pro/launchpad_pro_mk3.py` shows exactly which decisions are UX vs hardware.
 
 ## Development workflow
 
 No way to run this outside Live — Ableton owns the Python runtime. Loop:
 
-1. Edit `.py` files at repo root.
-2. Run `./install.sh` (copies to Windows-side MIDI Remote Scripts dir, deletes `Log.txt` to give a clean read).
+1. Edit `.py` files (shared at repo root, device-specific in `mini/` / `pro/`).
+2. Run `./install.sh [--mini|--pro|--all]` (assembles + copies to the Windows-side MIDI Remote Scripts dirs, deletes `Log.txt` once to give a clean read).
 3. User restarts Ableton Live (full restart — reloading control surface is not enough).
 4. If broken, read log via paths below.
 
@@ -281,19 +319,23 @@ Stay quiet about restart instructions — the user knows.
 ### Paths
 
 - Source: `/home/mahed/projects/launchpad-mini-mk3-script/`
-- Install target: `/mnt/c/ProgramData/Ableton/Live 12 Suite/Resources/MIDI Remote Scripts/Launchpad_Mini_MK3/`
+- Install targets: `/mnt/c/ProgramData/Ableton/Live 12 Suite/Resources/MIDI Remote Scripts/Launchpad_Mini_MK3/` and `.../Launchpad_Pro_MK3/`
 - Ableton log: `/mnt/c/Users/mahed/AppData/Roaming/Ableton/Live 12.3/Preferences/Log.txt`
 
-Both hard-coded in `install.sh`. No fallback discovery — update if Live version changes.
+All hard-coded in `install.sh`. No fallback discovery — update if Live version changes.
 
 ### Sanity check
 
 ```bash
-python3 -m py_compile *.py
+python3 -m py_compile *.py mini/*.py pro/*.py
 ```
 
 Catches syntax errors. Cannot validate Ableton API (modules not importable here). No test suite, no linting.
 
 ### MIDI port reminder
 
-For sequencer LEDs to render, script must be bound to `MIDIIN2 (LPMiniMK3 MIDI)` / `MIDIOUT2 (LPMiniMK3 MIDI)`. Non-`MIDIIN2` ports work for launch grid but not Programmer-mode LEDs. Clip launching works but sequencer pads dark → suspect port mapping.
+For sequencer LEDs to render, each script must be bound to its device's DAW/script port pair:
+- **Mini**: `MIDIIN2 (LPMiniMK3 MIDI)` / `MIDIOUT2 (LPMiniMK3 MIDI)`.
+- **Pro**: the 3rd pair — typically `MIDIIN3 (LPProMK3 MIDI)` / `MIDIOUT3 (LPProMK3 MIDI)` on Windows.
+
+Wrong port: launch grid works but Programmer-mode LEDs stay dark. Clip launching works but sequencer pads dark → suspect port mapping.

@@ -1,6 +1,8 @@
-# Launchpad Mini MK3 - Custom Ableton Live Remote Script
+# Launchpad Mini MK3 / Pro MK3 - Custom Ableton Live Remote Scripts
 
-A custom MIDI remote script for the **Novation Launchpad Mini MK3** that extends the default Ableton Live 12 controller with advanced features: **clip & scene copy-paste**, **smart arm toggle**, a **4-mode bottom row**, and **drum/melodic step sequencers** inspired by Push and Launchpad95.
+Custom MIDI remote scripts for the **Novation Launchpad Mini MK3** and **Launchpad Pro MK3** that extend the default Ableton Live 12 controllers with advanced features: **clip & scene copy-paste**, **smart arm toggle**, a **4-mode bottom row**, and **drum/melodic step sequencers** inspired by Push and Launchpad95.
+
+Both devices share the same component core; the feature tour below describes the Mini. The Pro port maps the same features onto its dedicated hardware buttons — see [Launchpad Pro MK3](#launchpad-pro-mk3) below.
 
 ---
 
@@ -188,7 +190,7 @@ These controls are active only in sequencer modes. Session mode keeps the normal
 
 ### Steps
 
-1. Copy all `.py` files from this repository to Ableton's MIDI Remote Scripts folder:
+1. Copy all root `.py` files **plus** the device overlay's `.py` files (`mini/` for the Mini, `pro/` for the Pro — see [Project Structure](#project-structure)) flat into Ableton's MIDI Remote Scripts folder:
 
    **Windows:**
    ```
@@ -219,23 +221,45 @@ These controls are active only in sequencer modes. Session mode keeps the normal
 
 ### WSL Install Script
 
-If you develop on WSL, you can use the included `install.sh` script. Edit the `SOURCE_DIR` and `DEST_DIR` paths to match your setup, then run:
+If you develop on WSL, you can use the included `install.sh` script. Edit the `SOURCE_DIR` / destination paths to match your setup, then run:
 
 ```bash
-./install.sh
+./install.sh           # installs both devices
+./install.sh --mini    # Launchpad Mini MK3 only
+./install.sh --pro     # Launchpad Pro MK3 only
 ```
+
+The script assembles the shared root files + the device overlay (`mini/` or `pro/`) flat into each device's MIDI Remote Scripts folder. For a manual install, reproduce that: copy all root `.py` files **plus** the overlay's `.py` files into one flat folder.
+
+---
+
+## Launchpad Pro MK3
+
+The Pro port keeps the same modes and sequencers but uses the Pro's dedicated buttons instead of the Mini's hold/double-tap gestures:
+
+- **Shift** (real button) — copy-paste modifier in session, shift layer in sequencers. No more double-taps or shift lock.
+- **Clear / Duplicate** — hold + tap to delete/duplicate clips & scenes (session) or steps/pads/pages (drum sequencer). Shift+Duplicate doubles the loop.
+- **Quantise** — quantize selection in sequencer modes. **Shift+Record** — Capture MIDI.
+- **Play / Record** — dedicated transport.
+- **Note / Sequencer buttons** — switch directly to the melodic / drum sequencer (press again to return to Session).
+- **Track-select row + Record Arm/Mute/Solo/Stop Clip** — mixer modes below the grid, so the full 8×8 grid stays clips and all 8 scene buttons launch scenes. Shift+Record Arm = Undo, Shift+Mute = Redo, Shift+Stop Clip = Stop All Clips.
+
+Ports: bind the **third** port pair (`MIDIIN3/MIDIOUT3 (LPProMK3 MIDI)` on Windows) for Programmer-mode LEDs.
 
 ---
 
 ## Project Structure
 
+Shared components live at the repo root; device-specific modules live in `mini/` and `pro/` (same module names, assembled flat at install time).
+
 | File | Description |
 |------|-------------|
-| `__init__.py` | Entry point &mdash; registers controller capabilities and MIDI ports |
-| `launchpad_mini_mk3.py` | Main control surface class, mode setup, component wiring |
-| `elements.py` | Hardware button/pad definitions (MIDI notes, SysEx elements) |
+| `mini/__init__.py` · `pro/__init__.py` | Entry points &mdash; controller capabilities and MIDI ports |
+| `mini/launchpad_mini_mk3.py` · `pro/launchpad_pro_mk3.py` | Main control surface classes, mode setup, component wiring |
+| `mini/elements.py` · `pro/elements.py` | Hardware button/pad definitions (MIDI notes, SysEx elements) |
 | `skin.py` | LED color scheme (merges custom colors with Novation base skin) |
-| `sysex_ids.py` | Device family code and model ID constants |
+| `mini/sysex_ids.py` · `pro/sysex_ids.py` | Device family code and model ID constants |
+| `mini/device_profile.py` · `pro/device_profile.py` | Per-device seam: USB IDs, SysEx command bytes, button CCs, LED indices |
 | `channel_strip_with_arm_toggle.py` | Smart arm toggle on track selection buttons |
 | `clip_copy_component.py` | Clip clipboard management and paste validation |
 | `scene_copy_component.py` | Scene clipboard management with full property duplication |
