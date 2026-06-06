@@ -1,0 +1,1028 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Launchpad Mini MK3 — Documentation des modes</title>
+<style>
+  :root {
+    --bg: #15171a; --panel: #1f2226; --panel2: #262a2f;
+    --border: #2e3338; --border-hi: #4a5158;
+    --text: #d6dadd; --dim: #8a939a; --hi: #ffffff;
+    --accent: #5dd39e; --accent-bg: #1a3a2e;
+    --danger: #e63946; --warn: #f1c40f;
+    --link: #7fb6ea;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { font: 14px/1.5 -apple-system, "Segoe UI", system-ui, sans-serif;
+         background: var(--bg); color: var(--text); margin: 0; }
+  a { color: var(--link); }
+  h1, h2, h3, h4 { color: var(--hi); }
+  code, kbd { background: #0e1014; color: #c2e0ff; padding: 1px 6px;
+              border-radius: 3px; font: 12px/1 "SF Mono", Menlo, monospace; }
+  kbd { border: 1px solid var(--border-hi); }
+
+  .app { display: grid; grid-template-columns: 280px 1fr;
+         min-height: 100vh; }
+
+  /* ---------------- Sidebar ---------------- */
+  .sidebar { background: var(--panel); border-right: 1px solid var(--border);
+             padding: 18px 0; overflow-y: auto; position: sticky; top: 0;
+             height: 100vh; }
+  .sidebar h2 { margin: 0 18px 12px; font-size: 13px;
+                text-transform: uppercase; letter-spacing: .8px;
+                color: var(--dim); font-weight: 600; }
+  .sidebar .brand { padding: 0 18px 16px; border-bottom: 1px solid var(--border); margin-bottom: 16px; }
+  .sidebar .brand h1 { font-size: 16px; margin: 0; }
+  .sidebar .brand p { margin: 4px 0 0; font-size: 12px; color: var(--dim); }
+  .mode-group { margin-bottom: 8px; }
+  .mode-group .group-title { padding: 6px 18px 4px; font-size: 12px;
+                              color: var(--dim); text-transform: uppercase;
+                              letter-spacing: .6px; font-weight: 600; }
+  .mode-btn { display: block; width: 100%; text-align: left;
+              background: transparent; border: 0; color: var(--text);
+              padding: 7px 18px 7px 28px; cursor: pointer; font: inherit;
+              border-left: 3px solid transparent; }
+  .mode-btn:hover { background: var(--panel2); }
+  .mode-btn.active { background: var(--accent-bg); color: var(--hi);
+                     border-left-color: var(--accent); font-weight: 600; }
+  .mode-btn.disabled { color: #555; font-style: italic; }
+  .mode-btn .sub { display: block; font-size: 11px; color: var(--dim);
+                   margin-top: 2px; font-weight: 400; }
+
+  /* ---------------- Main ---------------- */
+  .main { padding: 30px 40px 60px; max-width: 1100px; }
+  .main h1 { margin: 0 0 4px; font-size: 24px; }
+  .main .crumb { color: var(--dim); font-size: 13px; margin-bottom: 14px; }
+  .main .crumb .sep { opacity: .5; margin: 0 6px; }
+  .row { display: grid; grid-template-columns: auto 1fr;
+         gap: 28px; align-items: flex-start; margin-top: 14px; }
+  .activation { background: var(--panel); padding: 12px 14px; border-radius: 6px;
+                border-left: 3px solid var(--accent); margin: 6px 0 14px; }
+  .activation strong { color: var(--hi); }
+
+  /* ---------------- Launchpad rendering ---------------- */
+  .lp-wrap { background: #0a0c0e; padding: 14px; border-radius: 14px;
+             border: 1px solid var(--border); width: max-content; }
+  .lp { display: grid; grid-template-columns: repeat(9, 44px);
+        grid-template-rows: repeat(9, 44px); gap: 4px; }
+  .pad { width: 44px; height: 44px; display: flex;
+         align-items: center; justify-content: center;
+         font-size: 9px; line-height: 1.05; font-weight: 600;
+         border-radius: 5px; background: #14171a; border: 1px solid #1c2024;
+         position: relative; cursor: default; user-select: none; padding: 2px;
+         text-align: center; color: rgba(0,0,0,0.65); }
+  .pad.round { border-radius: 50%; }
+  .pad.empty { background: transparent; border: none; }
+  .pad.off { background: #16181a; color: #444; border-color: #1c2024; }
+  .pad.dark { color: rgba(255,255,255,0.78); text-shadow: 0 1px 1px rgba(0,0,0,0.4); }
+  .pad .label { pointer-events: none; word-break: break-word; }
+  .pad[data-tip]:hover::after {
+    content: attr(data-tip); position: absolute; bottom: 110%; left: 50%;
+    transform: translateX(-50%); background: #000; color: #fff; padding: 6px 10px;
+    border-radius: 4px; font-size: 11px; white-space: nowrap; z-index: 10;
+    border: 1px solid #555; pointer-events: none; font-weight: 400;
+    max-width: 340px; white-space: normal; min-width: 120px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.6);
+  }
+  .pad[data-tip]:hover::before {
+    content: ''; position: absolute; bottom: 102%; left: 50%;
+    transform: translateX(-50%); border: 5px solid transparent;
+    border-top-color: #555;
+  }
+
+  /* ---------------- Info side ---------------- */
+  .info-side { min-width: 0; }
+  .info-side h3 { margin: 24px 0 8px; font-size: 14px;
+                  text-transform: uppercase; letter-spacing: .8px;
+                  color: var(--dim); border-bottom: 1px solid var(--border);
+                  padding-bottom: 6px; }
+  .info-side h3:first-child { margin-top: 0; }
+  .info-side p { margin: 6px 0; }
+  .info-side ul { padding-left: 20px; margin: 6px 0; }
+  .info-side li { margin: 5px 0; }
+  .gestures { background: var(--panel); border-radius: 6px;
+              border: 1px solid var(--border); overflow: hidden; }
+  .gestures table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .gestures th, .gestures td { padding: 8px 12px; text-align: left;
+                                 border-bottom: 1px solid var(--border);
+                                 vertical-align: top; }
+  .gestures th { background: var(--panel2); color: var(--hi);
+                 font-weight: 600; font-size: 12px;
+                 text-transform: uppercase; letter-spacing: .5px; }
+  .gestures tr:last-child td { border-bottom: none; }
+  .gestures td:first-child { white-space: nowrap; color: var(--accent);
+                              font-weight: 600; font-family: "SF Mono", Menlo, monospace; font-size: 12px; }
+
+  /* ---------------- Legend ---------------- */
+  .legend { background: var(--panel); border-radius: 6px;
+            border: 1px solid var(--border); padding: 14px 16px;
+            margin-top: 16px; }
+  .legend dl { display: grid; grid-template-columns: 110px 1fr;
+               gap: 6px 14px; margin: 0; font-size: 13px; }
+  .legend dt { font-weight: 600; color: var(--hi); }
+  .legend dd { margin: 0; color: var(--dim); }
+  .swatch { display: inline-block; width: 12px; height: 12px; border-radius: 3px;
+            vertical-align: -2px; margin-right: 6px;
+            border: 1px solid rgba(255,255,255,0.12); }
+
+  .ergo-notes { margin-top: 28px; background: var(--panel);
+                border-radius: 6px; border: 1px solid var(--border);
+                padding: 16px 20px; }
+  .ergo-notes h2 { margin: 0 0 12px; font-size: 16px; }
+  .ergo-notes ol { padding-left: 22px; margin: 8px 0; }
+  .ergo-notes li { margin: 10px 0; }
+  .ergo-notes li strong { color: var(--hi); }
+  .ergo-notes em { color: var(--warn); font-style: normal; }
+  .tag { display: inline-block; background: var(--panel2);
+         color: var(--dim); padding: 1px 7px; border-radius: 10px;
+         font-size: 11px; border: 1px solid var(--border); }
+  .tag.disabled { color: #6b3a3a; border-color: #3a1f1f;
+                  background: rgba(60,20,20,0.4); }
+  .tag.active { color: #2ecc71; border-color: #1e5a3a;
+                background: rgba(20,60,40,0.4); }
+</style>
+</head>
+
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand">
+      <h1>Mini MK3 — modes</h1>
+      <p>Doc interactive de chaque sous-mode</p>
+    </div>
+    <div id="modeList"></div>
+  </aside>
+
+  <main class="main" id="main">
+    <!-- Rendered by JS -->
+  </main>
+</div>
+
+<script>
+// ============================================================================
+// COLOR PALETTE (HTML hex approximations of LP MK3 Programmer palette)
+// ============================================================================
+const C = {
+  off:           '#16181a',
+  darkGrey:      '#3a3a3a',
+  grey:          '#6e6e6e',
+  white:         '#ffffff',
+  whiteHalf:     '#5a5a5a',
+  red:           '#e63946',
+  redHalf:       '#4a1f22',
+  orange:        '#e67e22',
+  orangeHalf:    '#5a3818',
+  darkOrange:    '#a36223',
+  amber:         '#ffbf00',
+  amberHalf:     '#5a4400',
+  yellow:        '#f1c40f',
+  yellowHalf:    '#5a4a08',
+  green:         '#2ecc71',
+  greenHalf:     '#1a5a32',
+  mint:          '#7be0c0',
+  mintHalf:      '#2c5a4a',
+  lightBlue:     '#7fb6ea',
+  lightBlueHalf: '#2c4d6a',
+  blue:          '#3498db',
+  blueHalf:      '#1c3a5a',
+  darkBlue:      '#1c2c4a',
+  darkBlueHalf:  '#1a2438',
+  purple:        '#9b59b6',
+  purpleHalf:    '#3a1c4a',
+  violet:        '#7a4a9c',
+  aqua:          '#13c4d4',
+  paleGreen:     '#abf18f',
+  paleGreenHalf: '#3a5a2a',
+  cream:         '#f0e2c2',
+};
+
+const TOP_BTN_NAMES = ['↑','↓','←','→','Session','Drums (▶)','Keys (●)','User'];
+
+// ============================================================================
+// MODE TREE — groups → modes
+// ============================================================================
+const MODE_GROUPS = [
+  {
+    title: 'Session',
+    modes: [
+      { key: 'session-select',   label: 'Select (default)',  sub: 'bottom row = track select' },
+      { key: 'session-edit',     label: 'Edit mode',          sub: 'double-tap shift' },
+      { key: 'session-user',     label: 'User-held selector', sub: 'hold User' },
+      { key: 'session-copy',     label: 'Copy modifier',      sub: 'hold shift + tap' },
+      { key: 'session-stopsolomute', label: 'Stop/Solo/Mute', sub: 'désactivé — code conservé', disabled: true },
+    ],
+  },
+  {
+    title: 'Drum Sequencer',
+    modes: [
+      { key: 'drum-base',          label: 'Base (loop selector)',  sub: 'défaut — bottom-right = pages' },
+      { key: 'drum-grid',          label: 'Grid resolution mode',  sub: 'cycle slot 4 → grid' },
+      { key: 'drum-shift',         label: 'Shift tenu (loop picker)', sub: 'slot 5 tenu' },
+      { key: 'drum-velocity',      label: 'Velocity overlay',       sub: 'step pad tenu > 350ms' },
+      { key: 'drum-special-idle',  label: 'Special Shift — idle',   sub: 'slot 6 montre le mode courant' },
+      { key: 'drum-special-delete',label: 'Special Shift — Delete', sub: 'slot 6 tenu, mode rouge' },
+      { key: 'drum-special-dup',   label: 'Special Shift — Duplicate', sub: 'slot 6 tenu, mode vert' },
+    ],
+  },
+  {
+    title: 'Melodic Sequencer',
+    modes: [
+      { key: 'melodic-base',  label: 'Base (pitch grid)',  sub: 'défaut' },
+      { key: 'melodic-grid',  label: 'Grid resolution mode', sub: 'cycle slot 6 → grid' },
+      { key: 'melodic-shift', label: 'Shift tenu',         sub: 'row 0 = page selector' },
+    ],
+  },
+  {
+    title: 'Modes désactivés',
+    modes: [
+      { key: 'drum-64',       label: 'Drum 64-step',       sub: 'code conservé, UI cachée', disabled: true },
+      { key: 'drum-4-track',  label: 'Drum 4-track',       sub: 'code conservé, UI cachée', disabled: true },
+      { key: 'chord-pad',     label: 'Chord Pad',          sub: 'code conservé, UI cachée', disabled: true },
+    ],
+  },
+];
+
+// ============================================================================
+// MODE DESCRIPTORS (title, activation, description, gestures, notes, layout)
+// ============================================================================
+const MODE_INFO = {
+  // ----- Session ----------------------------------------------------------
+  'session-select': {
+    group: 'Session',
+    title: 'Session — Select (sub-mode par défaut)',
+    activation: 'État au démarrage. Seul sub-mode actif du stop-solo-mute (les autres sont désactivés dans la passe ergo en cours).',
+    description: [
+      'Les 8×8 pads lancent les clips de la session view (vue à 8 tracks × 8 scenes).',
+      'La <strong>bottom row du clip launch matrix</strong> (row 7) est récupérée par le sub-mode select : chaque slot devient <em>Track select / Arm toggle</em>. Tap pad inutilisé = sélectionner la track ; re-tap = toggle arm.',
+      'Le <strong>shift (scene 7)</strong> affiche la couleur du sub-mode (ici aqua = select). Tap rapide = cycle sub-mode (no-op puisque cycle réduit à select). Double-tap = edit mode.',
+      'Les <strong>scene launch buttons</strong> (col 8) lancent les scènes.',
+    ],
+    gestures: [
+      ['Tap clip', 'Launch clip'],
+      ['Tap empty slot', 'Stop slot (ou: armed + record → record)'],
+      ['Tap scene', 'Launch scene'],
+      ['Hold shift + tap clip', 'Copy clip (premier tap) / Paste (second tap)'],
+      ['Hold shift + tap scene', 'Copy scene / Paste scene'],
+      ['Double-tap shift (< 350ms)', 'Enter edit mode (cf. Edit mode)'],
+      ['Hold User', 'Affiche mode selector (cf. User-held selector)'],
+      ['Tap session (round top)', 'Cycle launch ↔ overview'],
+    ],
+    notes: [
+      'Tap shift ne fait visiblement rien (cycle vide). Pourrait être désactivé totalement plutôt que faire un cycle no-op.',
+    ],
+  },
+  'session-edit': {
+    group: 'Session',
+    title: 'Session — Edit mode',
+    activation: 'Double-tap rapide sur le shift (scene 7), release-to-release ≤ 350ms.',
+    description: [
+      'La bottom row du clip launch matrix devient une <strong>row de modifiers</strong>. Les clips au-dessus voient leur tap routé vers l\'edit-mode handler (au lieu d\'être lancés).',
+      'Slots 5-6 inerts (réservés pour d\'autres actions futures).',
+      'Slot 7 = Undo (tap blanc). Avec shift tenu = Redo.',
+      'Le shift LED (col 8 scene 7) devient blanc pour signaler edit on. Tap court shift = retour au sub-mode précédent.',
+    ],
+    gestures: [
+      ['Hold slot 0 + tap clip', 'Delete clip'],
+      ['Hold slot 1 + tap clip', 'Duplicate clip → scene below'],
+      ['Hold slot 2 + tap clip (1st)', 'Capture move source (le pad devient blanc = armed)'],
+      ['Hold slot 2 + tap clip (2nd)', 'Move clip vers cible (target doit être vide)'],
+      ['Hold slot 3 + tap clip', 'Color cycle (color_index = (n+1) % 70)'],
+      ['Tap slot 4', 'Stop All Clips (instant)'],
+      ['Tap slot 7', 'Undo'],
+      ['Hold shift > 300ms + tap slot 7', 'Redo'],
+      ['Tap shift', 'Exit edit mode'],
+    ],
+    notes: [
+      'Slots 5 et 6 inerts — candidats pour New Scene, Quantize selected clip, etc.',
+      'Color cycle wrap à 70 (palette Live), pas de feedback du nouveau color_index si pas de Live ouvert.',
+    ],
+  },
+  'session-user': {
+    group: 'Session',
+    title: 'Session — User-held mode selector',
+    activation: 'Hold User button (top-right round, le 4e à partir de la gauche).',
+    description: [
+      '<strong>Hold</strong> sur User → l\'affichage des scenes change : seuls les 2 modes actifs (Drum et Melodic) sont allumés. User LED devient blanc (LED_USER_HELD).',
+      'Si un mode est actif, son slot scene est en <em>couleur pleine</em> ; les autres en <em>demi</em>.',
+      'Tap scene = enter ce mode. Tap le mode actif = retour session.',
+      '<strong>Release sans tap</strong> = retour automatique en session mode (raccourci "exit").',
+    ],
+    gestures: [
+      ['Hold User', 'Affiche selector (LEDs sur scene 0 et 3)'],
+      ['(Hold) tap scene 0', 'Enter Drum sequencer'],
+      ['(Hold) tap scene 3', 'Enter Melodic sequencer'],
+      ['(Hold) tap mode actif', 'Retour session'],
+      ['Release User sans tap', 'Retour session (depuis n\'importe quel mode)'],
+      ['Release User après tap', 'Reste dans le mode choisi'],
+    ],
+    notes: [
+      'Slots 1, 2, 4 actuellement off (drum 64, drum 4-track, chord désactivés).',
+      'User LED en mode bright (palette 3) — sur le hardware ça lit "dim white", à voir si OK.',
+    ],
+  },
+  'session-copy': {
+    group: 'Session',
+    title: 'Session — Copy modifier',
+    activation: 'Hold shift (scene 7) > 300ms.',
+    description: [
+      'Le shift agit en modifier de copie. Au premier tap clip = copy. Second tap empty slot = paste. Idem pour scene.',
+      'Le shift LED reste sa couleur du sub-mode. Aucun feedback explicit qu\'on est en mode copy — c\'est implicite via la durée du hold.',
+      'Sur release du shift, clipboards (clip + scene) sont vidés.',
+    ],
+    gestures: [
+      ['Hold shift + tap clip avec contenu', 'Capture clip dans clipboard'],
+      ['Hold shift + tap empty slot', 'Paste clip'],
+      ['Hold shift + tap scene avec clips', 'Capture scene'],
+      ['Hold shift + tap scene vide', 'Paste scene (insertion + duplication)'],
+      ['Release shift', 'Vide les clipboards (clip + scene)'],
+    ],
+    notes: [
+      'Geste implicite — pas de feedback LED qu\'on est en "armed copy". Beginner-unfriendly.',
+      'Edit mode sépare delete/duplicate/move sur des modifiers visibles. Le copy reste sur shift par tradition mais c\'est inconsistant.',
+    ],
+  },
+  'session-stopsolomute': {
+    group: 'Session',
+    title: 'Sub-modes Stop / Solo / Mute (désactivés)',
+    activation: 'Désactivé dans la passe ergonomie. Code conservé, commenté dans <code>_create_stop_solo_mute_modes</code>.',
+    description: [
+      'Historiquement le cycle complet du shift était : select → stop → solo → mute → select. Désactivé actuellement pour réduire la complexité.',
+      'Edit mode (5e sub-mode) reste accessible via double-tap.',
+    ],
+    gestures: [
+      ['(réactiver via)', 'décommenter _STOP_SOLO_MUTE_CYCLE + add_mode("stop"/"solo"/"mute") dans launchpad_mini_mk3.py'],
+    ],
+    notes: [
+      'Quand réactivé : le tap shift cyclera, le double-tap fera toujours edit (logique edit indépendante).',
+    ],
+  },
+
+  // ----- Drum Sequencer ---------------------------------------------------
+  'drum-base': {
+    group: 'Drum Sequencer',
+    title: 'Drum Sequencer — Base (loop selector)',
+    activation: 'User-held selector → tap scene 0 (Drum).',
+    description: [
+      '<strong>Top 4×8</strong> = step grid pour le drum pad sélectionné (32 steps / page, 4 rows × 8 cols).',
+      '<strong>Bottom-left 4×4</strong> = drum pad selector (16 pads visibles). Le pad sélectionné = couleur ambre. Les autres montrent la couleur du drum-rack pad si dispo.',
+      '<strong>Bottom-right 4×4</strong> = page selector (16 pages possibles dans le clip). La page courante = aqua bright ; pages inside loop = lightBlue half ; outside = dark grey.',
+      '<strong>Pads en train de jouer</strong> (au playhead) flashent en vert.',
+      'Le <strong>shift LED</strong> reste sur scene 7 mais inert en sequencer mode (réservé futur).',
+    ],
+    gestures: [
+      ['Tap step pad', 'Toggle step (sur release — la press attend une gesture)'],
+      ['Hold step + autre step', 'Length extend (target empty) ou multi-select (target rempli)'],
+      ['Hold step + ↑/↓', 'Velocity ±8 (clampé 1..127)'],
+      ['Hold step + ←/→', 'Nudge note ±1 step'],
+      ['Hold step > 350ms', 'Arme l\'overlay velocity (cf. Velocity overlay)'],
+      ['Tap drum pad (bottom-left)', 'Select ce drum pad → step grid affiche ses notes'],
+      ['Tap page pad (bottom-right)', 'View this page (sans shrink du loop)'],
+      ['Double-tap page pad', 'Scope loop sur cette page'],
+      ['Hold page + tap autre page', 'Scope loop sur ce range'],
+      ['Tap arrow ↑', 'Pitch +12 semitones (sauf si step held → velocity +8)'],
+      ['Tap arrow ↓', 'Pitch −12 semitones (sauf velocity)'],
+      ['Tap arrow ←', 'Undo (sauf si step held → nudge −1)'],
+      ['Tap arrow →', 'Redo (sauf nudge +1)'],
+      ['Tap session button', 'Latch session (tap court) / preview puis revert (long hold)'],
+    ],
+    notes: [
+      'Le Capture (slot 0) et Quantize (slot 1) sont rarement utilisés en flux — pourraient descendre.',
+      'Note Playing flash = vert (palette WHITE rend gris sur ce device → on a choisi vert pour pop).',
+    ],
+  },
+  'drum-grid': {
+    group: 'Drum Sequencer',
+    title: 'Drum Sequencer — Grid resolution mode',
+    activation: 'Tap slot 4 (cycle button) → bascule bottom-right en grid mode. Re-tap = retour loop.',
+    description: [
+      '<strong>Bottom-right 4×4</strong> affiche maintenant 16 résolutions de step grid au lieu du page selector.',
+      'Top row (cells 0-3) = binaire : 1/4, 1/8, 1/16, 1/32.',
+      'Row 2 = binaire fines : 1/64, 1/128, 1/256, 1/512.',
+      'Bottom rows = mêmes valeurs en ternaire (label terminé par "t"). Couleur violette pour différencier visuellement les ternaires.',
+      'La résolution active = blanc bright. Les autres binaires = orange half ; ternaires = violet.',
+      '<strong>Sans shift</strong>, les cells sont visibles mais <em>inertes</em>. Avec shift tenu, presses = sélection.',
+    ],
+    gestures: [
+      ['Hold shift + tap cell', 'Select cette résolution comme step_length'],
+      ['Tap slot 4 à nouveau', 'Retour bottom-right = page selector'],
+    ],
+    notes: [
+      'Les notes existantes ne sont PAS remappées au changement de résolution — seule l\'échelle des steps change.',
+      'Le shift-gating ajoute un step de friction mais protège des clicks accidentels (la résolution impacte tout le clip).',
+    ],
+  },
+  'drum-shift': {
+    group: 'Drum Sequencer',
+    title: 'Drum Sequencer — Shift tenu',
+    activation: 'Hold slot 5 (sequencer shift). Ou shift LOCK via double-tap sur slot 5.',
+    description: [
+      'Le <strong>step grid (top 4×8)</strong> devient un <em>loop range picker</em>. Chaque step shows Inside/Outside du loop (light blue / light blue half). Tap = scope loop sur ce step. Hold + tap autre = range scope.',
+      '<strong>Bottom-right grid cells</strong> deviennent actives (si en grid mode, cf. Drum Grid).',
+      'Slot 5 LED bright ambre tant que tenu (ou locked).',
+    ],
+    gestures: [
+      ['Hold slot 5 + tap step', 'Scope loop sur ce step (1-step loop)'],
+      ['Hold slot 5 + step A + step B', 'Scope loop sur [A, B]'],
+      ['Double-tap slot 5 (≤ 350ms)', 'Toggle shift LOCK sticky (relâcher slot 5 garde le shift actif)'],
+      ['Re-double-tap slot 5', 'Disable shift LOCK'],
+    ],
+    notes: [
+      'Shift lock = persistance utile pour ne pas tenir 2 boutons à la fois pendant l\'édition.',
+      'Le step grid pendant shift montre clairement la longueur du loop visuellement.',
+    ],
+  },
+  'drum-velocity': {
+    group: 'Drum Sequencer',
+    title: 'Drum Sequencer — Velocity overlay',
+    activation: 'Hold un step pad > 350ms (sans shift tenu).',
+    description: [
+      'Le bottom-right 4×4 affiche une rampe de 16 niveaux de velocity (cold → hot : green/mint/amber/yellow/orange/red/white).',
+      'Tap un niveau = set velocity de la note tenue à ce level.',
+      'Sur release du step pad, l\'overlay se retire et le pad n\'est PAS toggle (la gesture velocity consomme le release).',
+    ],
+    gestures: [
+      ['Hold step + tap velocity cell', 'Set velocity to this level'],
+      ['Release step', 'Quitte l\'overlay (note conservée)'],
+    ],
+    notes: [
+      'L\'arm timer (350ms) est important — taps rapides toggle le step sans flasher l\'overlay.',
+      'Visible uniquement si shift n\'est pas tenu (shift a priorité pour le loop picker).',
+    ],
+  },
+  'drum-special-idle': {
+    group: 'Drum Sequencer',
+    title: 'Drum Sequencer — Special Shift (slot 6) idle',
+    activation: 'Par défaut, slot 6 est en demi-luminosité avec la couleur du mode courant.',
+    description: [
+      '<strong>Slot 6</strong> = cycle button "delete / duplicate". Visible toujours en sequencer mode.',
+      'Couleur idle :<br>• Vert demi → mode courant = duplicate<br>• Rouge demi → mode courant = delete',
+      '<strong>Tap rapide</strong> (< 300ms, sans action target) = cycle delete ↔ duplicate.',
+      '<strong>Hold</strong> = entre en armed action mode (cf. Special Shift Delete / Duplicate).',
+    ],
+    gestures: [
+      ['Tap rapide slot 6', 'Cycle mode (delete ↔ duplicate). LED idle change.'],
+      ['Hold slot 6', 'Entre en armed mode (immédiat). Voir Delete / Duplicate.'],
+      ['Hold slot 6 + tap target + release', 'Action effectuée → release ne cycle pas le mode.'],
+    ],
+    notes: [
+      'Pas de status bar quand on cycle — seul indicator est la couleur LED.',
+    ],
+  },
+  'drum-special-delete': {
+    group: 'Drum Sequencer',
+    title: 'Drum Sequencer — Special Shift Delete',
+    activation: 'Mode = delete (rouge), puis hold slot 6.',
+    description: [
+      '<strong>Slot 6 bright rouge</strong>. <strong>Top scene buttons (0-5) cachés.</strong>',
+      '<strong>Scenes 0-3 → row selectors</strong> (rouge demi, lit). Slot 4-5 off, slot 7 reserved.',
+      '<strong>Drum pad selector</strong> : pads sans notes deviennent dim grey ; pads avec notes gardent leur couleur (preview du contenu).',
+      'Tap n\'importe quel <strong>target</strong> = suppression immédiate, action_performed = True → release ne cycle pas le mode.',
+    ],
+    gestures: [
+      ['Hold slot 6 + tap drum pad', 'Delete TOUTES les notes de ce pitch (tout le clip)'],
+      ['Hold slot 6 + tap row selector (scene 0-3)', 'Delete les notes du pad sélectionné sur cette row (page courante)'],
+      ['Hold slot 6 + tap page pad (bottom-right)', 'Wipe la page entière (tous pitchs)'],
+      ['Hold slot 6 + tap step pad', 'Delete cette note précise (pad sélectionné, ce step)'],
+      ['Release slot 6', 'Exit, no cycle (puisque action_performed)'],
+    ],
+    notes: [
+      'Destructeur — pas de confirmation. Undo (←) en cas d\'erreur.',
+      'Le row scope est page courante seulement (par design — cf. discussion ergo).',
+    ],
+  },
+  'drum-special-dup': {
+    group: 'Drum Sequencer',
+    title: 'Drum Sequencer — Special Shift Duplicate',
+    activation: 'Mode = duplicate (vert), puis hold slot 6.',
+    description: [
+      '<strong>Slot 6 bright vert</strong>. Scenes 0-3 → row selectors verts.',
+      'Geste à 2 taps : 1ère tap = capture <em>source</em>, 2ème tap (même type) = copie.',
+      'Pour <strong>pad / page / step</strong>, la source <em>clignote blanc</em> (channel 1 Programmer). Pour <strong>row</strong>, la source row est lit bright dans la scene column.',
+      'Cross-type 2nd tap (ex: source pad → tap row) = reset source au nouveau (pas d\'erreur, juste swap).',
+      'Source == target = no-op (release la capture).',
+    ],
+    gestures: [
+      ['Hold slot 6 + 1ère tap drum pad', 'Capture source pitch. Pad clignote blanc.'],
+      ['Hold slot 6 + 2ème tap drum pad (différent)', 'Copie toutes les notes source pitch → target pitch (tout le clip).'],
+      ['Idem row → row', 'Copie row source (page courante) vers row target. Si target > loop_end, étend le loop.'],
+      ['Idem page → page', 'Copie toutes les notes de la page source vers target. Étend loop si besoin.'],
+      ['Idem step → step', 'Copie la note du step source (pitch sélectionné) vers target step.'],
+      ['Release slot 6 avant 2ème tap', 'Reset source. Le mode reste duplicate.'],
+    ],
+    notes: [
+      'Pas encore de blink pour le row source — uniquement bright vs half dans scene column.',
+      'La 2-tap UX peut être confuse pour qqun qui ne connaît pas. Status bar message au capture aiderait.',
+    ],
+  },
+
+  // ----- Melodic ---------------------------------------------------------
+  'melodic-base': {
+    group: 'Melodic Sequencer',
+    title: 'Melodic Sequencer — Base',
+    activation: 'User-held selector → tap scene 3 (Melodic).',
+    description: [
+      '<strong>Top 7×8</strong> = grille pitch × step. Chaque row = un pitch (y=0 = root + octave). 8 steps par page.',
+      '<strong>Row 0 (top)</strong> = highest pitch ; <strong>Row 7 (bottom)</strong> = step grid.',
+      'Wait — actually la layout est : 8×8 où les rows servent toutes au pitch grid, sauf en mode shift où row 0 devient page selector.',
+      'Couleurs : root = ambre, autres pitchs = dark blue half, step en cours de jouer = bright.',
+    ],
+    gestures: [
+      ['Tap cell', 'Toggle note à ce pitch / step'],
+      ['Hold cell + autre', 'Length extend / multi-select'],
+      ['Tap arrow ↑↓', 'Pitch ±12 semitones'],
+      ['Tap arrow ←→', 'Pitch ±1 semitone'],
+      ['Slot 0 (no shift)', 'Capture MIDI'],
+      ['Slot 1 (no shift)', 'Quantize selected'],
+      ['Slot 6', 'Cycle bottom-right pitch ↔ grid'],
+    ],
+    notes: [
+      'Pas d\'undo/redo sur les arrows (contrairement à drum). Inconsistance ergo.',
+    ],
+  },
+  'melodic-grid': {
+    group: 'Melodic Sequencer',
+    title: 'Melodic Sequencer — Grid resolution mode',
+    activation: 'Tap slot 6 (cycle button) → bottom-right en grid.',
+    description: [
+      'Idem drum-grid : les 16 cells du bottom-right deviennent sélecteur de résolution. Mais ici elles couvrent SEULEMENT le bottom-right 4×4, le reste du pitch grid reste accessible.',
+      'Shift-gated également (cells dim sans shift, actives avec).',
+    ],
+    gestures: [
+      ['Hold slot 5 + tap cell', 'Select résolution'],
+    ],
+    notes: [],
+  },
+  'melodic-shift': {
+    group: 'Melodic Sequencer',
+    title: 'Melodic Sequencer — Shift tenu',
+    activation: 'Hold slot 5 (sequencer shift).',
+    description: [
+      '<strong>Row 0 devient dual-purpose</strong> : cells 0-6 = page selector (8 pages), cell 7 = preview toggle.',
+      'Slot 0 du scene column dual : sans shift = Capture, avec shift = <strong>Chromatic toggle</strong>.',
+      'Slot 1 dual : sans shift = Quantize, avec shift = <strong>Scale cycle</strong>.',
+      'Le step grid n\'a pas de loop picker en melodic (contrairement à drum) — pas implémenté.',
+    ],
+    gestures: [
+      ['Hold slot 5 + tap row 0, col 0-6', 'Select page'],
+      ['Hold slot 5 + tap row 0, col 7', 'Toggle preview mode'],
+      ['Hold slot 5 + tap slot 0', 'Chromatic on/off'],
+      ['Hold slot 5 + tap slot 1', 'Cycle scale (Major, Minor, etc.)'],
+      ['Double-tap slot 5', 'Shift LOCK'],
+    ],
+    notes: [
+      'Page selector sur row 0 = ergonomique mais cache la première row de pitchs pendant qu\'on tient shift. Acceptable car gesture courte.',
+      'Chromatic / Scale sont des actions globales — slot 0/1 dual purpose un peu chargé.',
+    ],
+  },
+
+  // ----- Disabled --------------------------------------------------------
+  'drum-64': {
+    group: 'Modes désactivés',
+    title: 'Drum 64-step Sequencer (désactivé)',
+    activation: 'Code conservé mais retiré du User selector. Composant créé dans <code>_create_drum_64_sequencer</code> mais non navigable.',
+    description: [
+      'Sequencer single-pad qui montre 64 steps sur la grille 8×8 (matrix fixe, pas de paging).',
+      'Modes matrix : edit / loop_pick / grid_pick via cycle slot 6.',
+      'Désactivé dans la passe ergo pour réduire la cognitive load.',
+    ],
+    gestures: [
+      ['(décommenter)', 'add_mode("drum_64_sequence") + _MODE_SELECTOR_SLOTS[1] dans launchpad_mini_mk3.py'],
+    ],
+    notes: [],
+  },
+  'drum-4-track': {
+    group: 'Modes désactivés',
+    title: 'Drum 4-track Sequencer (désactivé)',
+    activation: 'Idem drum-64 — code conservé, UI retirée.',
+    description: [
+      '4 drum pads × 16 steps. Chaque pad sur 2 rows.',
+      'Idem matrix modes (edit / loop_pick / grid_pick).',
+    ],
+    gestures: [],
+    notes: [],
+  },
+  'chord-pad': {
+    group: 'Modes désactivés',
+    title: 'Chord Pad (désactivé)',
+    activation: 'Code conservé, UI retirée.',
+    description: [
+      '8×8 grille chord wheel : cols = degrés de scale, rows = octave shift.',
+      'Triggers une seule note (root) ; combiner avec Live\'s Chord MIDI effect pour le chord complet.',
+    ],
+    gestures: [],
+    notes: [],
+  },
+};
+
+// ============================================================================
+// LAYOUT BUILDERS — per mode, return cells = { "r,c": {color, label, tip} }
+// ============================================================================
+
+// Top row builders — drum/melodic vs session
+function topRow(mode) {
+  const cells = {};
+  // Default: all off
+  for (let c = 0; c < 8; c++) cells[`0,${c}`] = { color: C.off, label: TOP_BTN_NAMES[c], tip: TOP_BTN_NAMES[c], round: true };
+  // Session button (idx 4)
+  if (mode.startsWith('session')) {
+    cells['0,4'] = { color: C.green, label: 'Session', tip: 'Session button — cycle launch ↔ overview', round: true };
+  } else if (mode.startsWith('drum') || mode.startsWith('melodic')) {
+    cells['0,4'] = { color: C.greenHalf, label: 'Session', tip: 'Session button (dim) — tap = latch session, hold = preview', round: true };
+  }
+  // Drums + Keys = transport
+  cells['0,5'] = { color: C.greenHalf, label: 'Play', tip: 'Drums button = Play/Stop transport', round: true };
+  cells['0,6'] = { color: C.redHalf, label: 'Rec', tip: 'Keys button = Session Record', round: true };
+  // User
+  if (mode === 'session-user') {
+    cells['0,7'] = { color: C.white, label: 'User', tip: 'User tenu — affiche le mode selector', round: true };
+  } else if (mode.startsWith('drum')) {
+    cells['0,7'] = { color: C.amber, label: 'User', tip: 'User — drum sequencer actif', round: true };
+  } else if (mode.startsWith('melodic')) {
+    cells['0,7'] = { color: C.blue, label: 'User', tip: 'User — melodic sequencer actif', round: true };
+  } else {
+    cells['0,7'] = { color: C.off, label: 'User', tip: 'User — hold pour selector', round: true };
+  }
+  // Arrows
+  if (mode.startsWith('drum')) {
+    cells['0,0'] = { color: C.greenHalf, label: '↑', tip: 'Pitch +12 (ou Velocity +8 si step held)', round: true };
+    cells['0,1'] = { color: C.greenHalf, label: '↓', tip: 'Pitch −12 (ou Velocity −8)', round: true };
+    cells['0,2'] = { color: C.mint, label: '←', tip: 'Undo (ou Nudge −1 si step held)', round: true };
+    cells['0,3'] = { color: C.mint, label: '→', tip: 'Redo (ou Nudge +1)', round: true };
+  } else if (mode.startsWith('melodic')) {
+    cells['0,0'] = { color: C.greenHalf, label: '↑', tip: 'Pitch +12 semitones', round: true };
+    cells['0,1'] = { color: C.greenHalf, label: '↓', tip: 'Pitch −12', round: true };
+    cells['0,2'] = { color: C.mint, label: '←', tip: 'Pitch −1 semitone', round: true };
+    cells['0,3'] = { color: C.mint, label: '→', tip: 'Pitch +1', round: true };
+  } else {
+    // Session: navigation
+    cells['0,0'] = { color: C.darkGrey, label: '↑', tip: 'Session nav up', round: true };
+    cells['0,1'] = { color: C.darkGrey, label: '↓', tip: 'Session nav down', round: true };
+    cells['0,2'] = { color: C.darkGrey, label: '←', tip: 'Session nav left', round: true };
+    cells['0,3'] = { color: C.darkGrey, label: '→', tip: 'Session nav right', round: true };
+  }
+  cells['0,8'] = { empty: true };
+  return cells;
+}
+
+// Scene column builders (col 8, rows 1-8)
+function sceneCol(mode) {
+  const cells = {};
+  // Default
+  for (let r = 1; r <= 8; r++) cells[`${r},8`] = { color: C.off, label: '', tip: `Scene ${r-1}`, round: true };
+
+  if (mode === 'session-select') {
+    for (let r = 1; r <= 7; r++) cells[`${r},8`] = { color: C.darkGrey, label: `Sc${r-1}`, tip: 'Launch scene', round: true };
+    cells['8,8'] = { color: C.aqua, label: 'Shift', tip: 'Shift / Stop-Solo-Mute (mode select)', round: true };
+  } else if (mode === 'session-edit') {
+    for (let r = 1; r <= 7; r++) cells[`${r},8`] = { color: C.darkGrey, label: `Sc${r-1}`, tip: 'Scene (handler edit mode)', round: true };
+    cells['8,8'] = { color: C.white, label: 'Shift', tip: 'Shift edit (tap = exit, hold + tap slot 7 = Redo)', round: true };
+  } else if (mode === 'session-user') {
+    cells['1,8'] = { color: C.amber, label: 'Drum', tip: 'Tap = enter Drum sequencer', round: true };
+    cells['2,8'] = { color: C.off, label: '', tip: 'Drum 64 (désactivé)', round: true };
+    cells['3,8'] = { color: C.off, label: '', tip: 'Drum 4-track (désactivé)', round: true };
+    cells['4,8'] = { color: C.blue, label: 'Melo', tip: 'Tap = enter Melodic sequencer', round: true };
+    cells['5,8'] = { color: C.off, label: '', tip: 'Chord (désactivé)', round: true };
+    cells['6,8'] = { color: C.off, label: '', tip: '', round: true };
+    cells['7,8'] = { color: C.off, label: '', tip: '', round: true };
+    cells['8,8'] = { color: C.aqua, label: 'Shift', tip: 'Shift (untouched durant User held)', round: true };
+  } else if (mode === 'session-copy') {
+    for (let r = 1; r <= 7; r++) cells[`${r},8`] = { color: C.darkGrey, label: `Sc${r-1}`, tip: 'Scene (copy si shift tenu et tap)', round: true };
+    cells['8,8'] = { color: C.aqua, label: 'Shift', tip: 'Hold shift = modifier copy', round: true };
+  } else if (mode === 'session-stopsolomute') {
+    for (let r = 1; r <= 7; r++) cells[`${r},8`] = { color: C.darkGrey, label: `Sc${r-1}`, tip: 'Scene', round: true };
+    cells['8,8'] = { color: C.whiteHalf, label: 'Shift', tip: 'Cycle désactivé (un seul sub-mode)', round: true };
+  } else if (mode.startsWith('drum')) {
+    drumScene(cells, mode);
+  } else if (mode.startsWith('melodic')) {
+    melodicScene(cells, mode);
+  }
+  return cells;
+}
+
+function drumScene(cells, mode) {
+  const special = mode === 'drum-special-delete' || mode === 'drum-special-dup';
+  const isVel = mode === 'drum-velocity';
+  if (special) {
+    const isDel = mode === 'drum-special-delete';
+    const half = isDel ? C.redHalf : C.greenHalf;
+    const full = isDel ? C.red : C.green;
+    cells['1,8'] = { color: half, label: 'Row 0', tip: `Row selector 0 (${isDel?'delete':'capture/copy'} row of selected pad, current page)`, round: true };
+    cells['2,8'] = { color: half, label: 'Row 1', tip: 'Row selector 1', round: true };
+    cells['3,8'] = { color: half, label: 'Row 2', tip: 'Row selector 2', round: true };
+    cells['4,8'] = { color: half, label: 'Row 3', tip: 'Row selector 3', round: true };
+    cells['5,8'] = { color: C.off, label: '', tip: 'inert pendant special shift', round: true };
+    cells['6,8'] = { color: C.amber, label: 'Shift', tip: 'Sequencer shift (peut être tenu en même temps)', round: true };
+    cells['7,8'] = { color: full, label: isDel?'DEL':'DUP', tip: 'Special Shift held — armed', round: true };
+    cells['8,8'] = { color: C.off, label: 'Resv', tip: 'Reserved (session-only)', round: true };
+  } else {
+    cells['1,8'] = { color: C.greenHalf, label: 'Capt', tip: 'Capture MIDI (dim = nothing to capture ; vert plein si can_capture_midi)', round: true };
+    cells['2,8'] = { color: C.aqua, label: 'Qtz', tip: 'Quantize selected (held steps ou all of selected pad)', round: true };
+    cells['3,8'] = { color: C.yellowHalf, label: 'DupPg', tip: 'Duplicate Page modifier — hold + tap page', round: true };
+    cells['4,8'] = { color: C.purple, label: 'Dbl', tip: 'Double Loop — tap = double length + copie contenu', round: true };
+    cells['5,8'] = { color: mode === 'drum-grid' ? C.orange : C.aqua, label: 'Cycle', tip: `Cycle bottom-right loop ↔ grid (actuel: ${mode==='drum-grid'?'grid':'loop'})`, round: true };
+    cells['6,8'] = { color: mode === 'drum-shift' ? C.amber : C.off, label: 'Shift', tip: mode==='drum-shift'?'Sequencer shift TENU':'Sequencer shift idle (hold = loop picker)', round: true };
+    cells['7,8'] = { color: C.greenHalf, label: 'Spc', tip: 'Special Shift idle (mode = duplicate par défaut)', round: true };
+    cells['8,8'] = { color: C.off, label: 'Resv', tip: 'Reserved (slot 8 / scene 7) — session-only', round: true };
+  }
+}
+
+function melodicScene(cells, mode) {
+  const shift = mode === 'melodic-shift';
+  cells['1,8'] = { color: shift ? C.purple : C.greenHalf, label: shift ? 'Chrm' : 'Capt', tip: shift?'Chromatic toggle':'Capture MIDI', round: true };
+  cells['2,8'] = { color: C.aqua, label: shift ? 'Scal' : 'Qtz', tip: shift?'Cycle scale':'Quantize', round: true };
+  cells['3,8'] = { color: C.off, label: '', tip: 'free', round: true };
+  cells['4,8'] = { color: C.off, label: '', tip: 'free', round: true };
+  cells['5,8'] = { color: C.off, label: '', tip: 'free', round: true };
+  cells['6,8'] = { color: mode === 'melodic-shift' ? C.mint : C.off, label: 'Shift', tip: 'Sequencer shift', round: true };
+  cells['7,8'] = { color: mode === 'melodic-grid' ? C.orange : C.aqua, label: 'Cycle', tip: 'Cycle pitch ↔ grid', round: true };
+  cells['8,8'] = { color: C.off, label: 'Resv', tip: 'Reserved', round: true };
+}
+
+// Pad grid builders (rows 1-8, cols 0-7)
+function padGrid(mode) {
+  const cells = {};
+  for (let r = 1; r <= 8; r++)
+    for (let c = 0; c < 8; c++)
+      cells[`${r},${c}`] = padCell(mode, r-1, c);
+  return cells;
+}
+
+function padCell(mode, padRow, padCol) {
+  // padRow 0-7 (top to bottom), padCol 0-7
+  if (mode.startsWith('session')) return sessionPad(mode, padRow, padCol);
+  if (mode.startsWith('drum')) return drumPad(mode, padRow, padCol);
+  if (mode.startsWith('melodic')) return melodicPad(mode, padRow, padCol);
+  if (mode === 'drum-64' || mode === 'drum-4-track' || mode === 'chord-pad') return { color: C.off, label: '', tip: 'mode désactivé' };
+  return { color: C.off, label: '', tip: '' };
+}
+
+function sessionPad(mode, r, c) {
+  // Track select bottom row in select mode
+  if (mode === 'session-select' && r === 7) {
+    return { color: C.amber, label: `T${c}`, tip: `Track ${c} select / arm toggle` };
+  }
+  if (mode === 'session-edit' && r === 7) {
+    const m = [['Del',C.red,'Delete (hold + tap clip/scene)'],
+               ['Dup',C.green,'Duplicate (Ctrl+D style)'],
+               ['Mov',C.blue,'Move (1st tap source, 2nd target)'],
+               ['Col',C.yellow,'Color cycle'],
+               ['Stop',C.darkOrange,'Stop All Clips (tap = instant)'],
+               ['',C.off,'inert'],
+               ['',C.off,'inert'],
+               ['Undo',C.whiteHalf,'Undo (avec shift held = Redo)']];
+    return { color: m[c][1], label: m[c][0], tip: m[c][2] };
+  }
+  if (mode === 'session-copy' && r === 7) {
+    return { color: C.amber, label: `T${c}`, tip: `Track ${c} (copy gated tant que shift tenu)` };
+  }
+  // Mock clip grid
+  const mockClips = [
+    [C.greenHalf, C.blue, C.off, C.off, C.amber, C.off, C.off, C.off],
+    [C.greenHalf, C.off, C.off, C.purple, C.off, C.off, C.off, C.off],
+    [C.off, C.off, C.off, C.off, C.off, C.off, C.off, C.off],
+  ];
+  const color = (mockClips[r] && mockClips[r][c]) || C.off;
+  let tip = `Clip slot (track ${c}, scene ${r})`;
+  if (mode === 'session-user') tip += ' (gated par User held)';
+  if (mode === 'session-edit') tip = `Clip slot — routé vers edit handler (delete/dup/move/color/...)`;
+  return { color, label: '', tip };
+}
+
+function drumPad(mode, r, c) {
+  const isShift = mode === 'drum-shift';
+  const isGrid = mode === 'drum-grid';
+  const isVel = mode === 'drum-velocity';
+  const isSpecial = mode === 'drum-special-delete' || mode === 'drum-special-dup';
+  const isSpecialDel = mode === 'drum-special-delete';
+  const isSpecialDup = mode === 'drum-special-dup';
+
+  // Step grid: top 4 rows
+  if (r < 4) {
+    const step = r * 8 + c;
+    if (isShift) {
+      // Loop range picker backdrop
+      const inLoop = step < 16;
+      return { color: inLoop ? C.lightBlue : C.lightBlueHalf, label: '', tip: `Step ${step} — tap = scope loop here (inside loop: ${inLoop})` };
+    }
+    // Base / Special / Vel / Grid
+    const downbeat = step % 4 === 0;
+    const mockNotes = [0, 4, 6, 10, 12, 16, 24];
+    const hasNote = mockNotes.includes(step);
+    if (step === 4 && isSpecialDup) {
+      // simulate source blink on step
+      return { color: C.amber, label: '★', tip: `Step ${step} — source captured (blink white)` };
+    }
+    let color;
+    if (hasNote) color = C.amber;
+    else color = downbeat ? C.blueHalf : C.darkBlueHalf;
+    let tip = `Step ${step}`;
+    if (isSpecialDel) tip = `Step ${step} — tap = delete this note`;
+    else if (isSpecialDup) tip = `Step ${step} — tap source or target (cross-type resets)`;
+    return { color, label: '', tip };
+  }
+
+  // Bottom-left 4×4 = drum pad selector
+  if (r >= 4 && c < 4) {
+    const padIdx = (r - 4) * 4 + c;
+    const selected = padIdx === 0;
+    const mockHasNotes = [0, 1, 4, 5, 8].includes(padIdx);
+    const playing = padIdx === 4; // mock currently playing
+    const rackColor = [C.red, C.orange, C.yellow, C.green, C.blue, C.purple, C.aqua, C.amber, C.mint, C.violet, C.darkOrange, C.paleGreen, C.lightBlue, C.cream, C.darkBlue, C.whiteHalf][padIdx];
+
+    if (playing) return { color: C.green, label: '♪', tip: `Pad ${padIdx} (note en cours de jouer — flash vert)` };
+    if (selected) return { color: C.amber, label: '✓', tip: `Pad ${padIdx} (selected — couleur ambre)` };
+    if (isSpecial && !mockHasNotes) return { color: C.darkGrey, label: '', tip: `Pad ${padIdx} (empty — dim pendant special shift)` };
+    if (isSpecialDup && padIdx === 1) return { color: rackColor, label: '★', tip: `Pad ${padIdx} — source captured (blink white)` };
+    return { color: rackColor, label: '', tip: `Pad ${padIdx} ${mockHasNotes?'(has notes)':''}` };
+  }
+
+  // Bottom-right 4×4 = page selector / grid resolution
+  if (r >= 4 && c >= 4) {
+    const idx = (r - 4) * 4 + (c - 4);
+    if (isGrid) {
+      const labels = ['1/4','1/8','1/16','1/32','1/64','1/128','1/256','1/512','1/4t','1/8t','1/16t','1/32t','1/64t','1/128t','1/256t','1/512t'];
+      const ternary = idx >= 8;
+      const selected = idx === 2; // mock 1/16 selected
+      if (selected) return { color: C.white, label: labels[idx], tip: `Grid: ${labels[idx]} (selected)` };
+      return { color: ternary ? C.purple : C.orangeHalf, label: labels[idx], tip: `Grid: ${labels[idx]} (shift-gated)` };
+    }
+    if (isVel) {
+      // Velocity overlay rampe
+      const palette = [C.green, C.green, C.green, C.mint, C.mint, C.amber, C.amber, C.yellow, C.yellow, C.orange, C.orange, C.red, C.red, C.red, C.red, C.white];
+      return { color: palette[idx], label: `${idx+1}`, tip: `Velocity level ${idx+1} — tap = set velocity` };
+    }
+    // Page selector
+    const current = idx === 0;
+    const insideLoop = idx < 4;
+    let color, tip;
+    if (isSpecialDup && idx === 2) return { color: C.lightBlue, label: '★', tip: `Page ${idx+1} — source captured (blink)` };
+    if (current) { color = C.aqua; tip = `Page ${idx+1} (page courante)`; }
+    else if (insideLoop) { color = C.lightBlueHalf; tip = `Page ${idx+1} (inside loop)`; }
+    else { color = C.darkGrey; tip = `Page ${idx+1} (outside loop)`; }
+    if (isSpecial) {
+      const act = isSpecialDel ? 'wipe entire page (all pitchs)' : 'capture/copy page';
+      tip = `Page ${idx+1} — tap = ${act}`;
+    }
+    return { color, label: '', tip };
+  }
+  return { color: C.off, label: '', tip: '' };
+}
+
+function melodicPad(mode, r, c) {
+  const isShift = mode === 'melodic-shift';
+
+  // Shift held: row 0 = page selector + preview toggle
+  if (isShift && r === 0) {
+    if (c === 7) return { color: C.amber, label: 'PRV', tip: 'Preview toggle ON (tap = piano roll mode)' };
+    return { color: c < 4 ? C.aqua : C.darkGrey, label: `P${c+1}`, tip: `Page ${c+1} selector` };
+  }
+  // Row 7 = step grid (8 cols × 1 row)
+  if (r === 7) {
+    const downbeat = c % 4 === 0;
+    return { color: downbeat ? C.blueHalf : C.darkBlueHalf, label: '', tip: `Step ${c}` };
+  }
+  // Other rows = pitch cells
+  const isRoot = r === 6;
+  const inScale = [0, 2, 4, 5].includes(c); // mock diatonic
+  let color = isRoot ? C.amber : (inScale ? C.darkBlue : C.darkBlueHalf);
+  // Mock a couple notes
+  if ((r === 5 && c === 0) || (r === 3 && c === 4)) color = C.amber;
+  return { color, label: '', tip: `Row ${r} / col ${c}` };
+}
+
+// ============================================================================
+// RENDER
+// ============================================================================
+function buildCells(mode) {
+  return Object.assign({}, topRow(mode), sceneCol(mode), padGrid(mode));
+}
+
+function brightness(hex) {
+  hex = (hex || '').replace('#','');
+  if (hex.length !== 6) return 0;
+  const r = parseInt(hex.slice(0,2), 16);
+  const g = parseInt(hex.slice(2,4), 16);
+  const b = parseInt(hex.slice(4,6), 16);
+  return (r*299 + g*587 + b*114) / 1000;
+}
+
+function renderMode(modeKey) {
+  const info = MODE_INFO[modeKey];
+  if (!info) return;
+  const main = document.getElementById('main');
+  const cells = buildCells(modeKey);
+
+  // Build LP HTML
+  let lpHtml = '<div class="lp-wrap"><div class="lp">';
+  for (let r = 0; r < 9; r++) {
+    for (let c = 0; c < 9; c++) {
+      const cell = cells[`${r},${c}`] || { color: C.off };
+      if (cell.empty) { lpHtml += '<div class="pad empty"></div>'; continue; }
+      const classes = ['pad'];
+      if (cell.round || r === 0 || c === 8) classes.push('round');
+      if (cell.color === C.off) classes.push('off');
+      if (brightness(cell.color) < 128) classes.push('dark');
+      const bg = cell.color || C.off;
+      const tip = (cell.tip || '').replace(/"/g, '&quot;');
+      const lab = cell.label || '';
+      lpHtml += `<div class="${classes.join(' ')}" style="background:${bg}" data-tip="${tip}"><div class="label">${lab}</div></div>`;
+    }
+  }
+  lpHtml += '</div></div>';
+
+  // Build content
+  const descHtml = info.description.map(p => `<p>${p}</p>`).join('');
+  const gesturesHtml = info.gestures.length
+    ? `<table><thead><tr><th>Geste</th><th>Effet</th></tr></thead><tbody>${
+        info.gestures.map(g => `<tr><td>${g[0]}</td><td>${g[1]}</td></tr>`).join('')
+      }</tbody></table>`
+    : '<p style="color:var(--dim)">(pas de geste — mode contextuel ou désactivé)</p>';
+  const notesHtml = info.notes.length
+    ? `<ul>${info.notes.map(n => `<li>${n}</li>`).join('')}</ul>`
+    : '<p style="color:var(--dim)">Pas d\'observation spécifique.</p>';
+
+  main.innerHTML = `
+    <div class="crumb">${info.group} <span class="sep">›</span> ${info.title.split(' — ').slice(1).join(' — ') || info.title}</div>
+    <h1>${info.title}</h1>
+    <div class="activation"><strong>Activation —</strong> ${info.activation}</div>
+    <div class="row">
+      ${lpHtml}
+      <div class="info-side">
+        <h3>Description</h3>
+        ${descHtml}
+        <h3>Gestes & effets</h3>
+        <div class="gestures">${gesturesHtml}</div>
+        <h3>Notes ergonomiques</h3>
+        ${notesHtml}
+      </div>
+    </div>
+
+    <div class="legend">
+      <h2 style="margin:0 0 10px 0;border:0;padding:0;font-size:14px;">Code couleur (palette LP Mini MK3)</h2>
+      <dl>
+        <dt><span class="swatch" style="background:${C.green}"></span>Vert</dt><dd>Duplicate / action active / note playing</dd>
+        <dt><span class="swatch" style="background:${C.red}"></span>Rouge</dt><dd>Delete</dd>
+        <dt><span class="swatch" style="background:${C.blue}"></span>Bleu</dt><dd>Move / pitch grid</dd>
+        <dt><span class="swatch" style="background:${C.yellow}"></span>Jaune</dt><dd>Color cycle / Duplicate Page</dd>
+        <dt><span class="swatch" style="background:${C.orange}"></span>Orange</dt><dd>Stop All / Grid mode active</dd>
+        <dt><span class="swatch" style="background:${C.amber}"></span>Ambre</dt><dd>Drum mode / Selected pad / Sequencer shift</dd>
+        <dt><span class="swatch" style="background:${C.purple}"></span>Violet</dt><dd>Double Loop / Chromatic</dd>
+        <dt><span class="swatch" style="background:${C.aqua}"></span>Aqua</dt><dd>Quantize / Cycle loop / Shift session</dd>
+        <dt><span class="swatch" style="background:${C.white}"></span>Blanc</dt><dd>Undo / source captured / selected option</dd>
+        <dt><span class="swatch" style="background:${C.lightBlue}"></span>LightBlue</dt><dd>Inside loop (page / step picker)</dd>
+      </dl>
+    </div>
+
+    <div class="ergo-notes">
+      <h2>Observations ergonomiques globales</h2>
+      <ol>
+        <li><strong>Duplicate dupliqué</strong> — la fonction "duplicate page" existe à 2 endroits : slot 2 (modifier dédié) ET dans Special Shift slot 6 (mode duplicate + tap page). <em>Proposition</em> : virer slot 2.</li>
+        <li><strong>Slot 7 reserved inerte</strong> en sequencer modes. <em>Candidats</em> : Note Repeat, Accent, Metronome toggle, Tap Tempo.</li>
+        <li><strong>Capture + Quantize</strong> sont des actions rares (slots 0/1). Pourraient descendre pour libérer les positions prime.</li>
+        <li><strong>3 "shifts" verticalement adjacents</strong> (slots 5, 6, 7). Slot 6 est un shift modal (tap = cycle mode, hold = action). Renommer "Action Shift" mentalement aiderait.</li>
+        <li><strong>Special Shift cycle UX</strong> : tap rapide = cycle delete↔duplicate, mais pas de status bar. <em>À ajouter</em> : event bus → show_message.</li>
+        <li><strong>Top controls cachés en special shift</strong> : ergo OK mais perd les repères. Pourrait fader ou rester visibles si vraiment besoin (peu utile en pratique).</li>
+        <li><strong>Source duplicate row</strong> : pas encore de blink (juste bright vs half). Améliorable.</li>
+        <li><strong>Edit mode slots 5/6 inerts</strong> — candidats pour New Scene, Stop All Clips on selected track, etc.</li>
+        <li><strong>Pas d'undo/redo en melodic</strong> via arrows (vs drum). Inconsistance.</li>
+        <li><strong>AMBER vs YELLOW vs ORANGE</strong> visuellement proches — risque de confusion. À tester sur device.</li>
+        <li><strong>Pas de feedback "session copy en cours"</strong> — le geste shift+tap clip n'a aucun indicator visuel d'armed-copy. Beginner-unfriendly vs Edit mode qui montre clairement les modifiers.</li>
+      </ol>
+    </div>
+  `;
+}
+
+// ============================================================================
+// Build sidebar
+// ============================================================================
+function buildSidebar() {
+  const list = document.getElementById('modeList');
+  MODE_GROUPS.forEach(group => {
+    const div = document.createElement('div');
+    div.className = 'mode-group';
+    div.innerHTML = `<div class="group-title">${group.title}</div>`;
+    group.modes.forEach(m => {
+      const btn = document.createElement('button');
+      btn.className = 'mode-btn' + (m.disabled ? ' disabled' : '');
+      btn.dataset.mode = m.key;
+      btn.innerHTML = `${m.label}<span class="sub">${m.sub}</span>`;
+      btn.onclick = () => {
+        document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        renderMode(m.key);
+      };
+      div.appendChild(btn);
+    });
+    list.appendChild(div);
+  });
+}
+
+buildSidebar();
+// Default mode on load
+const defaultMode = 'drum-base';
+document.querySelector(`.mode-btn[data-mode="${defaultMode}"]`).classList.add('active');
+renderMode(defaultMode);
+</script>
+</body>
+</html>

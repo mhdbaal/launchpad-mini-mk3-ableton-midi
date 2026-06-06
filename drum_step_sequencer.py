@@ -71,7 +71,13 @@ DEFAULT_GRID_INDEX = 2  # 1/16
 #     7: device shift / stop-solo-mute (untouched here)
 CAPTURE_SLOT = 0
 QUANTIZE_SLOT = 1
-CYCLE_SLOT = 6
+DUPLICATE_PAGE_SLOT = 2     # held + tap page pad = copy current page → that page
+DOUBLE_LOOP_SLOT = 3        # tap = double loop length, duplicate content
+CYCLE_SLOT = 4              # loop selector ↔ grid resolution selector
+SHIFT_SLOT = 5              # sequencer shift (moved from slot 7) — parent-owned
+SPECIAL_SHIFT_SLOT = 6      # tap cycles mode (delete/duplicate); hold = action mode
+SPECIAL_SHIFT_TAP_THRESHOLD = 0.3  # release within this = "tap, cycle mode"
+STEPS_PER_ROW = 8           # row scope in step grid = 8 steps
 
 # Bottom-right 4x4 modes. Cycled by slot 6. Default is "loop" (the historical
 # behavior — 16 page pads). "grid" repurposes the 4x4 as a grid resolution
@@ -94,9 +100,13 @@ NUDGE_BEAT_DELTA = 1.0 / 24
 # bounds. The 4 tiers map to the StepVel* skin keys defined in skin.py.
 VELOCITY_TIER_BOUNDARIES = (31, 63, 95)
 # Step-hold velocity selector: 16 levels overlaid on the bottom-right 4x4
-# while at least one step pad is held with an existing note. Level → velocity
-# mapping is `level * 8` clamped to 1..127 (level 16 = peak = 127).
+# once a step pad has been held for VELOCITY_OVERLAY_HOLD_DELAY seconds.
+# Level → velocity mapping is `level * 8` clamped to 1..127 (level 16 = 127).
+# The hold delay keeps brief taps (which toggle the step) from briefly
+# flashing the bar. An empty held step still arms the overlay; tapping a
+# level on it creates a note at the chosen velocity (Push-style).
 VELOCITY_OVERLAY_LEVELS = 16
+VELOCITY_OVERLAY_HOLD_DELAY = 0.25
 
 
 class DrumStepSequencerComponent(Component):
@@ -113,6 +123,11 @@ class DrumStepSequencerComponent(Component):
         self._clip = None
         self._clip_slot = None
         self._drum_group_device = None
+        # Listeners attached on drum-pad chain.color so the bottom-left
+        # selector refreshes immediately when the user changes a pad's
+        # color in Live (rather than waiting for the next playhead tick).
+        # Stored as list of (live_obj, prop_name, callback) for cleanup.
+        self._drum_color_listeners = []
         self._selected_pitch = 36
         self._page_index = 0
         self._pitch_offset = 0
@@ -140,14 +155,47 @@ class DrumStepSequencerComponent(Component):
         # grid-resolution slots 0-3 become active; otherwise they're grey
         # and presses are ignored.
         self._device_shift_held = False
+        # User-button reference: while the parent's User button is held,
+        # scene_launch_buttons_raw doubles as the main-mode selector. We
+        # short-circuit our own control-button handling + LED updates so
+        # the parent's mode selector LEDs aren't clobbered.
+        self._user_mode_button = None
         self._grid_option_index = DEFAULT_GRID_INDEX
         # Bottom-right 4x4 mode: "loop" (page selector) or "grid" (resolution
         # selector). Cycled via the slot 6 cycle button.
         self._bottom_right_mode = BOTTOM_RIGHT_MODE_LOOP
         self._control_buttons = ()
         self._control_button_listeners = []
+        # Track pin: when not None, sequencer ignores Live's selected_track and
+        # operates on this track instead. Set via toggle_pin(). Cleared when the
+        # pinned track is removed from the song (see _on_tracks_changed).
+        self._pinned_track = None
         self._loop_press_points = []
         self._loop_range_active = False
+        # Duplicate Page modifier (slot 2). While held, a tap on a page
+        # pad in the bottom-right 4x4 copies the current page's notes
+        # onto that page (extending the loop if needed). Suppresses the
+        # normal page-view-on-tap so the page index doesn't jump first.
+        self._duplicate_page_held = False
+        # Special Shift (slot 6): single button cycling between
+        # "delete" (red) and "duplicate" (green) modes. Quick tap cycles
+        # the mode. Long press = "armed" mode: scene 0-3 become step-row
+        # selectors and presses on pads/rows/pages/steps execute the
+        # currently-selected mode's action. Top controls (Capture, etc.)
+        # are hidden while held. Action wins → no cycle on release.
+        self._special_shift_mode = "duplicate"
+        self._special_shift_held = False
+        self._special_shift_press_time = None
+        self._special_shift_action_performed = False
+        # For duplicate mode only: captured source on 1st tap. None means
+        # "no source yet, next tap captures". Tuples discriminate the
+        # target kind so a cross-type 2nd tap (pad → row) resets rather
+        # than producing a meaningless copy.
+        #   ("pad", pitch)
+        #   ("row", row_idx_0_to_3, page_idx)
+        #   ("page", page_idx)
+        #   ("step", global_step_idx)
+        self._duplicate_source = None
         # Step-grid loop range picker — active while device shift is held.
         # The step grid (top 4x8) doubles as a sub-page loop selector:
         # tap one step => loop = that single step; hold + range = scope.
@@ -159,8 +207,19 @@ class DrumStepSequencerComponent(Component):
         self._led_debug_count = 0
         self._delayed_update_task = self._tasks.add(task.sequence(task.wait(0.1), task.run(self.update)))
         self._delayed_update_task.kill()
+        # Velocity overlay arming: a step pad must be held continuously for
+        # VELOCITY_OVERLAY_HOLD_DELAY seconds before the bar appears. The
+        # task is restarted on every step press; the release path disarms
+        # when the held set empties.
+        self._velocity_overlay_armed = False
+        self._velocity_overlay_arm_task = self._tasks.add(
+            task.sequence(task.wait(VELOCITY_OVERLAY_HOLD_DELAY),
+                          task.run(self._arm_velocity_overlay)))
+        self._velocity_overlay_arm_task.kill()
         self._on_detail_clip_changed.subject = self.song.view
         self._on_selected_track_changed.subject = self.song.view
+        self._on_selected_scene_changed.subject = self.song.view
+        self._on_tracks_changed.subject = self.song
         self._on_can_capture_midi_changed.subject = self.song
 
     def disconnect(self):
@@ -224,6 +283,7 @@ class DrumStepSequencerComponent(Component):
             self._playhead = None
             self._held_step_pads = {}
             self._consumed_step_pads = set()
+            self._disarm_velocity_overlay()
             # Leaving sequencer mode counts as "done with build-out". Re-entering
             # later should treat the (now unchanged) clip's loop as sacred.
             self._clip_just_created = False
@@ -241,13 +301,41 @@ class DrumStepSequencerComponent(Component):
 
     @listens("detail_clip")
     def _on_detail_clip_changed(self):
+        # When pinned, Live's detail_clip can wander to other tracks (the user
+        # may click around in the arrangement). _refresh_clip already ignores
+        # detail_clip in that case, but we still re-run it so anything that
+        # depends on the clip-listener side effects stays consistent.
         if self.is_enabled():
             self._refresh_clip()
 
     @listens("selected_track")
     def _on_selected_track_changed(self):
+        # When pinned, selection changes in Live must NOT swap our target —
+        # the whole point of pinning is to stay on a specific track. _refresh_targets
+        # already routes through _resolve_target_track, so it's a no-op refresh
+        # in that case (drum-rack discovery may still re-run, harmless).
         if self.is_enabled():
             self._refresh_targets()
+
+    @listens("selected_scene")
+    def _on_selected_scene_changed(self):
+        # When pinned, the target clip slot follows the selected scene index
+        # on the pinned track. Live's detail_clip listener doesn't fire on a
+        # pure scene navigation, so we listen to selected_scene explicitly.
+        # When unpinned, this is redundant with detail_clip + highlighted_clip_slot
+        # but harmless.
+        if self.is_enabled():
+            self._refresh_clip()
+
+    @listens("tracks")
+    def _on_tracks_changed(self):
+        # If the pinned track was removed from the song, release the pin.
+        if (self._pinned_track is not None
+                and self._pinned_track not in self.song.tracks):
+            self._pinned_track = None
+            self._emit(Event.TRACK_UNPINNED, mode="drum_sequence")
+            if self.is_enabled():
+                self._refresh_targets()
 
     @listens("can_capture_midi")
     def _on_can_capture_midi_changed(self):
@@ -281,6 +369,7 @@ class DrumStepSequencerComponent(Component):
                 self._playhead = None
             self._update_step_leds()
             self._update_bottom_right_leds()
+            self._update_note_leds()
 
     @listens("playing_status")
     def _on_playing_status_changed(self):
@@ -301,9 +390,12 @@ class DrumStepSequencerComponent(Component):
         self._on_loop_changed()
 
     def _refresh_targets(self):
-        track = self.song.view.selected_track
+        track = self._resolve_target_track()
         drum_group = self._find_drum_group_device(track)
-        self._log("target track: {}, drum group: {}".format(getattr(track, "name", "<none>"), getattr(drum_group, "name", "<none>")))
+        self._log("target track: {} (pinned={}), drum group: {}".format(
+            getattr(track, "name", "<none>"),
+            self._pinned_track is not None,
+            getattr(drum_group, "name", "<none>")))
         self._set_drum_group_device(drum_group)
         self._refresh_clip()
         self._update_audition_translations()
@@ -312,11 +404,17 @@ class DrumStepSequencerComponent(Component):
     def _refresh_clip(self):
         clip_slot = self._selected_clip_slot()
         clip = None
-        detail_clip = self.song.view.detail_clip
-        if liveobj_valid(detail_clip) and detail_clip.is_midi_clip:
-            clip = detail_clip
-        elif clip_slot is not None and clip_slot.has_clip and clip_slot.clip.is_midi_clip:
-            clip = clip_slot.clip
+        if self._pinned_track is not None and liveobj_valid(self._pinned_track):
+            # Pinned: detail_clip can belong to any track and must not override
+            # the pinned slot. Use only the slot's clip.
+            if clip_slot is not None and clip_slot.has_clip and clip_slot.clip.is_midi_clip:
+                clip = clip_slot.clip
+        else:
+            detail_clip = self.song.view.detail_clip
+            if liveobj_valid(detail_clip) and detail_clip.is_midi_clip:
+                clip = detail_clip
+            elif clip_slot is not None and clip_slot.has_clip and clip_slot.clip.is_midi_clip:
+                clip = clip_slot.clip
         self._clip_slot = clip_slot
         self._set_clip(clip)
 
@@ -343,10 +441,126 @@ class DrumStepSequencerComponent(Component):
             selected_pad = drum_group.view.selected_drum_pad
             if liveobj_valid(selected_pad):
                 self._selected_pitch = selected_pad.note
+        self._rebuild_drum_color_listeners()
+
+    def _rebuild_drum_color_listeners(self):
+        """Attach `color` listeners on the FIRST chain of every drum pad
+        in the current drum group, so a color change in Live propagates
+        instantly to the bottom-left pad selector instead of waiting for
+        the next note refresh or playhead tick.
+
+        Also listens on each pad's `chains` collection — adding/removing a
+        sample on a pad replaces the chain object, which would orphan our
+        listener. On `chains` change we rebuild everything for safety.
+        Cost is O(num_pads) per rebuild, which is small (drum racks max ~128
+        pads, in practice ~16 visible)."""
+        # Tear down previous slots.
+        for obj, name, cb in self._drum_color_listeners:
+            try:
+                getattr(obj, "remove_{}_listener".format(name))(cb)
+            except Exception:
+                pass
+        self._drum_color_listeners = []
+        if not liveobj_valid(self._drum_group_device):
+            return
+        for pad in self._drum_group_device.drum_pads:
+            if not liveobj_valid(pad):
+                continue
+            # Rebuild on chains change (sample loaded/removed).
+            try:
+                pad.add_chains_listener(self._on_drum_chains_changed)
+                self._drum_color_listeners.append((pad, "chains", self._on_drum_chains_changed))
+            except Exception:
+                pass
+            chains = list(pad.chains) if pad.chains else []
+            if not chains:
+                continue
+            chain = chains[0]
+            if not liveobj_valid(chain):
+                continue
+            try:
+                chain.add_color_listener(self._on_drum_color_changed)
+                self._drum_color_listeners.append((chain, "color", self._on_drum_color_changed))
+            except Exception:
+                pass
+
+    def _on_drum_color_changed(self):
+        if self.is_enabled():
+            self._update_note_leds()
+
+    def _on_drum_chains_changed(self):
+        # Chains list mutated — rebuild listeners (chain object reference
+        # changes) and repaint.
+        self._rebuild_drum_color_listeners()
+        if self.is_enabled():
+            self._update_note_leds()
 
     def _selected_clip_slot(self):
+        if self._pinned_track is not None and liveobj_valid(self._pinned_track):
+            try:
+                scene = self.song.view.selected_scene
+                scene_idx = list(self.song.scenes).index(scene)
+                return self._pinned_track.clip_slots[scene_idx]
+            except (ValueError, IndexError, AttributeError):
+                return None
         slot = self.song.view.highlighted_clip_slot
         return slot if slot is not None else None
+
+    def _resolve_target_track(self):
+        """Track to operate on. Returns the pinned track if still valid,
+        otherwise falls back to Live's selected_track. Tracks listener
+        clears the pin if the track is removed; this also guards against
+        races where a stale reference survives a teardown."""
+        if self._pinned_track is not None and liveobj_valid(self._pinned_track):
+            return self._pinned_track
+        return self.song.view.selected_track
+
+    def toggle_pin(self):
+        """Pin/unpin the sequencer to a Live track.
+
+        - Unpinned → pin to currently-selected track. Returns True.
+        - Pinned   → release. Returns False.
+        - Selection is invalid (no track) → no-op, returns current state.
+
+        On pin: track.arm = True so the drum-pad audition routes through the
+        locked track even when Live's selection moves elsewhere. We don't
+        un-arm on unpin (the user may have wanted the track armed regardless).
+
+        Wired from launchpad_mini_mk3 via the shift+Session gesture.
+        """
+        if self._pinned_track is not None and liveobj_valid(self._pinned_track):
+            self._pinned_track = None
+            self._emit(Event.TRACK_UNPINNED, mode="drum_sequence")
+            self._refresh_targets()
+            return False
+        track = self.song.view.selected_track
+        if not liveobj_valid(track):
+            return False
+        # Only allow pinning regular tracks (master/return don't have clip_slots
+        # we can write to).
+        if track not in self.song.tracks:
+            return False
+        self._pinned_track = track
+        # Force-arm the pinned track. Without this, the drum-pad selector's
+        # audition pitches reach Live but get routed to whatever track Live
+        # currently considers armed/selected. Note: with song.exclusive_arm=True
+        # (Live's default), this will disarm other tracks. For a Launchpad+Push
+        # workflow where both controllers audition different tracks, the user
+        # needs Exclusive Arm disabled.
+        try:
+            if getattr(track, "can_be_armed", False):
+                track.arm = True
+        except (RuntimeError, AttributeError):
+            # Frozen tracks etc. raise; leave arm state untouched then.
+            pass
+        self._emit(Event.TRACK_PINNED, mode="drum_sequence",
+                   track_name=getattr(track, "name", "(unnamed)"))
+        self._refresh_targets()
+        return True
+
+    def is_pinned(self):
+        return (self._pinned_track is not None
+                and liveobj_valid(self._pinned_track))
 
     def _find_drum_group_device(self, track):
         if not liveobj_valid(track):
@@ -421,6 +635,27 @@ class DrumStepSequencerComponent(Component):
     def _on_grid_matrix_value(self, value, x, y, is_momentary):
         if not self.is_enabled():
             return
+        # Special Shift held: redirect every pad press to the action
+        # dispatcher and short-circuit normal grid handling (step toggle,
+        # loop scoping, drum-pad select, velocity overlay, ...). Release
+        # events are swallowed so leftover hold state in normal handlers
+        # doesn't fire on the way out.
+        if self._special_shift_held:
+            if not value:
+                return
+            if y >= 4 and x >= 4:
+                page_idx = (y - 4) * 4 + (x - 4)
+                self._special_shift_page_action(page_idx=page_idx)
+                return
+            if y >= 4 and x < 4:
+                pitch = self._pitch_for_note_button(x, y - 4)
+                self._special_shift_pad_action(pitch=pitch)
+                return
+            # y < 4 → step pad
+            step_in_page = y * 8 + x
+            global_step = self._page_index * STEPS_PER_PAGE + step_in_page
+            self._special_shift_step_action(global_step=global_step)
+            return
         if y >= 4 and x >= 4:
             # Step-hold velocity selector wins over loop/grid rendering whenever
             # a held step pad has a note (and shift isn't grabbing the surface
@@ -474,6 +709,13 @@ class DrumStepSequencerComponent(Component):
         self.update()
 
     def _handle_loop_press(self, index, pressed):
+        # Duplicate Page modifier wins: hold slot 2 + tap page pad =
+        # copy current page → that page. Swallow both press and release
+        # so the page-view / range-scope paths don't see this gesture.
+        if self._duplicate_page_held:
+            if pressed:
+                self._duplicate_page(index)
+            return
         if pressed:
             if index not in self._loop_press_points:
                 self._loop_press_points.append(index)
@@ -503,17 +745,36 @@ class DrumStepSequencerComponent(Component):
             self.update()
 
     def _velocity_overlay_should_show(self):
-        """Overlay is active iff at least one held step pad has a note AND
-        device shift is NOT held (shift gestures keep priority for the
-        bottom-right surface)."""
+        """Overlay is active once the hold-arm task has fired AND device
+        shift is NOT held (shift gestures keep priority for the
+        bottom-right surface). The arm fires when a step pad has been
+        held continuously for VELOCITY_OVERLAY_HOLD_DELAY — brief taps
+        for step toggling don't flash the bar."""
+        return self._velocity_overlay_armed and not self._device_shift_held
+
+    def _arm_velocity_overlay(self):
+        """Promote the current hold into a velocity-edit gesture. Called
+        by the delayed task; bails if the user already released or shift
+        is now held."""
+        if not self.is_enabled():
+            return
         if self._device_shift_held:
-            return False
-        for note_start in self._held_step_pads.values():
-            if note_start is None:
-                continue
-            if self._find_note_at_time(note_start) is not None:
-                return True
-        return False
+            return
+        if not self._held_step_pads:
+            return
+        if self._velocity_overlay_armed:
+            return
+        self._velocity_overlay_armed = True
+        self.update()
+
+    def _disarm_velocity_overlay(self):
+        """Kill the pending arm task and clear the armed flag. Called when
+        the held set empties, shift transitions, or sequencer is disabled."""
+        self._velocity_overlay_arm_task.kill()
+        if self._velocity_overlay_armed:
+            self._velocity_overlay_armed = False
+            if self.is_enabled():
+                self.update()
 
     def _velocity_overlay_cell_to_level(self, x, y):
         """Bottom-right cell (x in 4..7, y in 4..7) → level 1..16.
@@ -555,15 +816,30 @@ class DrumStepSequencerComponent(Component):
             self._set_grid_light_palette(x, y, palette)
 
     def _apply_velocity_from_selector(self, level):
-        """Set every held note's velocity to `level`'s value. Mirrors
-        `adjust_held_velocity` — marks the held step pads consumed so their
-        release doesn't toggle. Emits DRUM_VELOCITY_CHANGED once."""
-        if not self.is_enabled() or not liveobj_valid(self._clip):
+        """Set every held note's velocity to `level`'s value, OR create
+        new notes for held pads sitting on empty steps. Marks held pads
+        consumed so their release doesn't toggle. Emits
+        DRUM_VELOCITY_CHANGED once."""
+        if not self.is_enabled() or not self._ensure_clip():
             return
+        if self._selected_pitch is None:
+            self._selected_pitch = NOTE_SELECTOR_BASE_PITCH
         velocity = self._velocity_for_level(level)
+        new_notes = []
         modified = False
         for pad_step, note_start in list(self._held_step_pads.items()):
             if note_start is None:
+                # Empty held step → create a note at this level's
+                # velocity. Update the held entry to the new start_time so
+                # subsequent bar taps adjust the same note.
+                start = self._time_for_step(pad_step)
+                new_notes.append(Live.Clip.MidiNoteSpecification(
+                    pitch=self._selected_pitch, start_time=start,
+                    duration=self._step_length, velocity=velocity, mute=False))
+                self._held_step_pads[pad_step] = start
+                self._consumed_step_pads.add(pad_step)
+                self._ensure_loop_contains_time(start + self._step_length)
+                modified = True
                 continue
             note = self._find_note_at_time(note_start)
             if note is None:
@@ -572,6 +848,10 @@ class DrumStepSequencerComponent(Component):
                 self._replace_note(note, velocity=velocity)
                 modified = True
             self._consumed_step_pads.add(pad_step)
+        if new_notes:
+            self._clip.add_new_notes(tuple(new_notes))
+            self._clip.deselect_all_notes()
+            self._refresh_notes()
         if modified:
             self._emit(Event.DRUM_VELOCITY_CHANGED, velocity=velocity)
         self._update_step_leds()
@@ -590,6 +870,10 @@ class DrumStepSequencerComponent(Component):
             select: add target to held so arrow edits hit both notes.
           - Held step is empty → just track this press, no gesture."""
         if pressed:
+            # Restart the velocity-overlay arm timer on every press. The
+            # arm fires only if the user keeps holding past the delay —
+            # quick taps disarm via the release path before then.
+            self._velocity_overlay_arm_task.restart()
             anchor = self._anchor_for_extension()
             target_note = self._find_note_at_step(step)
             target_has_note = target_note is not None
@@ -616,6 +900,8 @@ class DrumStepSequencerComponent(Component):
             consumed = step in self._consumed_step_pads
             self._consumed_step_pads.discard(step)
             self._held_step_pads.pop(step, None)
+            if not self._held_step_pads:
+                self._disarm_velocity_overlay()
             self._update_step_leds()
             self._update_bottom_right_leds()
             if consumed:
@@ -921,6 +1207,334 @@ class DrumStepSequencerComponent(Component):
         self._clip.start_marker = start
         self._clip.end_marker = end
 
+    def _duplicate_page(self, target_index):
+        """Copy notes from the currently-viewed page to `target_index`.
+        Extends the loop to cover the target page if needed. No-op when
+        source == target (the user can still pass through to view that
+        page by releasing the modifier first)."""
+        if not self._ensure_clip():
+            return
+        source_index = self._page_index
+        if target_index == source_index:
+            return
+        source_start = source_index * self._page_length
+        source_end = source_start + self._page_length
+        target_start = target_index * self._page_length
+        notes = list(self._clip.get_notes_extended(
+            from_time=source_start, from_pitch=0,
+            time_span=self._page_length, pitch_span=128))
+        if not notes:
+            self._emit(Event.DRUM_PAGE_DUPLICATED,
+                       source=source_index + 1,
+                       target=target_index + 1, notes=0)
+            return
+        copies = []
+        for note in notes:
+            offset = note.start_time - source_start
+            copies.append(Live.Clip.MidiNoteSpecification(
+                pitch=note.pitch,
+                start_time=target_start + offset,
+                duration=note.duration,
+                velocity=note.velocity,
+                mute=note.mute))
+        target_end = target_start + self._page_length
+        if target_end > self._clip.loop_end:
+            self._set_clip_loop(self._clip.loop_start, target_end)
+        self._clip.add_new_notes(tuple(copies))
+        self._clip.deselect_all_notes()
+        self._refresh_notes()
+        self._emit(Event.DRUM_PAGE_DUPLICATED,
+                   source=source_index + 1,
+                   target=target_index + 1, notes=len(copies))
+        self.update()
+
+    def _double_loop(self):
+        """Double the loop length and duplicate the existing loop content
+        forward. 1-page loop → 2 pages with the same content; 4-page → 8.
+        Useful for building variations of an existing pattern in place."""
+        if not self._ensure_clip():
+            return
+        loop_start = self._clip.loop_start
+        loop_end = self._clip.loop_end
+        length = loop_end - loop_start
+        if length <= 0:
+            return
+        notes = list(self._clip.get_notes_extended(
+            from_time=loop_start, from_pitch=0,
+            time_span=length, pitch_span=128))
+        copies = []
+        for note in notes:
+            copies.append(Live.Clip.MidiNoteSpecification(
+                pitch=note.pitch,
+                start_time=note.start_time + length,
+                duration=note.duration,
+                velocity=note.velocity,
+                mute=note.mute))
+        new_end = loop_start + 2 * length
+        self._set_clip_loop(loop_start, new_end)
+        if copies:
+            self._clip.add_new_notes(tuple(copies))
+            self._clip.deselect_all_notes()
+        self._refresh_notes()
+        self._emit(Event.DRUM_LOOP_DOUBLED,
+                   old_length=length, new_length=2 * length,
+                   notes=len(copies))
+        self.update()
+
+    # ---- Special Shift (slot 6) ---------------------------------------
+
+    def _enter_special_shift(self):
+        if self._special_shift_held:
+            return
+        self._special_shift_held = True
+        self._special_shift_press_time = time.time()
+        self._special_shift_action_performed = False
+        self._duplicate_source = None
+        self.update()
+
+    def _exit_special_shift(self):
+        if not self._special_shift_held:
+            return
+        held_for = (time.time() - self._special_shift_press_time
+                    if self._special_shift_press_time is not None else 0.0)
+        self._special_shift_held = False
+        self._special_shift_press_time = None
+        # Quick tap without doing anything = cycle the mode. Long press
+        # without doing anything = just exit ("I was hesitating"). Action
+        # during hold = exit without cycling regardless of duration.
+        if (not self._special_shift_action_performed
+                and held_for <= SPECIAL_SHIFT_TAP_THRESHOLD):
+            self._cycle_special_shift_mode()
+        self._special_shift_action_performed = False
+        self._duplicate_source = None
+        self.update()
+
+    def _cycle_special_shift_mode(self):
+        self._special_shift_mode = (
+            "delete" if self._special_shift_mode == "duplicate"
+            else "duplicate")
+        self._log("special shift mode: {}".format(self._special_shift_mode))
+
+    # ---- Special Shift action dispatchers ----------------------------
+
+    def _special_shift_pad_action(self, pitch):
+        if self._special_shift_mode == "delete":
+            self._special_delete_pad(pitch)
+        else:
+            self._special_duplicate_capture_or_apply(("pad", pitch))
+
+    def _special_shift_row_action(self, row_idx):
+        page_idx = self._page_index
+        if self._special_shift_mode == "delete":
+            self._special_delete_row(row_idx, page_idx)
+        else:
+            self._special_duplicate_capture_or_apply(("row", row_idx, page_idx))
+
+    def _special_shift_page_action(self, page_idx):
+        if self._special_shift_mode == "delete":
+            self._special_delete_page(page_idx)
+        else:
+            self._special_duplicate_capture_or_apply(("page", page_idx))
+
+    def _special_shift_step_action(self, global_step):
+        if self._special_shift_mode == "delete":
+            self._special_delete_step(global_step)
+        else:
+            self._special_duplicate_capture_or_apply(("step", global_step))
+
+    def _special_duplicate_capture_or_apply(self, target):
+        """Duplicate is a two-tap gesture: 1st tap = capture source,
+        2nd tap (same kind) = apply. Cross-kind 2nd tap (e.g. pad source
+        then row target) resets so the user can re-start without an
+        explicit cancel."""
+        src = self._duplicate_source
+        if src is None or src[0] != target[0]:
+            self._duplicate_source = target
+            self.update()
+            return
+        # Same-kind: execute.
+        if target == src:
+            # Source == target → no-op, just release the capture.
+            self._duplicate_source = None
+            self.update()
+            return
+        kind = target[0]
+        if kind == "pad":
+            self._special_duplicate_pad(src[1], target[1])
+        elif kind == "row":
+            self._special_duplicate_row(src[1], src[2], target[1], target[2])
+        elif kind == "page":
+            self._special_duplicate_page(src[1], target[1])
+        elif kind == "step":
+            self._special_duplicate_step(src[1], target[1])
+        self._duplicate_source = None
+        self._special_shift_action_performed = True
+        self.update()
+
+    # ---- Delete primitives -------------------------------------------
+
+    def _special_delete_pad(self, pitch):
+        """Remove every note with this pitch from the entire clip."""
+        if not self._ensure_clip():
+            return
+        clip = self._clip
+        loop_end = max(clip.loop_end, self._page_length)
+        notes = list(clip.get_notes_extended(
+            from_time=0, from_pitch=pitch,
+            time_span=loop_end, pitch_span=1))
+        if not notes:
+            return
+        for note in notes:
+            try:
+                clip.remove_notes_extended(
+                    from_time=note.start_time, from_pitch=pitch,
+                    time_span=note.duration, pitch_span=1)
+            except Exception:
+                pass
+        self._refresh_notes()
+        self._special_shift_action_performed = True
+
+    def _special_delete_row(self, row_idx, page_idx):
+        """Remove notes of the selected pitch within the row's time range
+        on the given page (row = 8-step slice)."""
+        if not self._ensure_clip():
+            return
+        pitch = self._selected_pitch
+        start = (page_idx * self._page_length
+                 + row_idx * STEPS_PER_ROW * self._step_length)
+        span = STEPS_PER_ROW * self._step_length
+        try:
+            self._clip.remove_notes_extended(
+                from_time=start, from_pitch=pitch,
+                time_span=span, pitch_span=1)
+        except Exception:
+            pass
+        self._refresh_notes()
+        self._special_shift_action_performed = True
+
+    def _special_delete_page(self, page_idx):
+        """Wipe every pitch on the given page."""
+        if not self._ensure_clip():
+            return
+        start = page_idx * self._page_length
+        try:
+            self._clip.remove_notes_extended(
+                from_time=start, from_pitch=0,
+                time_span=self._page_length, pitch_span=128)
+        except Exception:
+            pass
+        self._refresh_notes()
+        self._special_shift_action_performed = True
+
+    def _special_delete_step(self, global_step):
+        """Remove the single step's note for the currently selected pitch."""
+        if not self._ensure_clip():
+            return
+        pitch = self._selected_pitch
+        start = global_step * self._step_length
+        try:
+            self._clip.remove_notes_extended(
+                from_time=start, from_pitch=pitch,
+                time_span=self._step_length, pitch_span=1)
+        except Exception:
+            pass
+        self._refresh_notes()
+        self._special_shift_action_performed = True
+
+    # ---- Duplicate primitives ----------------------------------------
+
+    def _special_duplicate_pad(self, source_pitch, target_pitch):
+        if not self._ensure_clip():
+            return
+        clip = self._clip
+        loop_end = max(clip.loop_end, self._page_length)
+        notes = list(clip.get_notes_extended(
+            from_time=0, from_pitch=source_pitch,
+            time_span=loop_end, pitch_span=1))
+        if not notes:
+            return
+        copies = [Live.Clip.MidiNoteSpecification(
+            pitch=target_pitch, start_time=n.start_time,
+            duration=n.duration, velocity=n.velocity, mute=n.mute)
+            for n in notes]
+        clip.add_new_notes(tuple(copies))
+        clip.deselect_all_notes()
+        self._refresh_notes()
+
+    def _special_duplicate_row(self, source_row, source_page,
+                                target_row, target_page):
+        if not self._ensure_clip():
+            return
+        clip = self._clip
+        pitch = self._selected_pitch
+        source_start = (source_page * self._page_length
+                        + source_row * STEPS_PER_ROW * self._step_length)
+        target_start = (target_page * self._page_length
+                        + target_row * STEPS_PER_ROW * self._step_length)
+        span = STEPS_PER_ROW * self._step_length
+        notes = list(clip.get_notes_extended(
+            from_time=source_start, from_pitch=pitch,
+            time_span=span, pitch_span=1))
+        if not notes:
+            return
+        copies = [Live.Clip.MidiNoteSpecification(
+            pitch=pitch,
+            start_time=target_start + (n.start_time - source_start),
+            duration=n.duration, velocity=n.velocity, mute=n.mute)
+            for n in notes]
+        target_end = target_start + span
+        if target_end > clip.loop_end:
+            self._set_clip_loop(clip.loop_start, target_end)
+        clip.add_new_notes(tuple(copies))
+        clip.deselect_all_notes()
+        self._refresh_notes()
+
+    def _special_duplicate_page(self, source_page, target_page):
+        if not self._ensure_clip():
+            return
+        clip = self._clip
+        source_start = source_page * self._page_length
+        target_start = target_page * self._page_length
+        notes = list(clip.get_notes_extended(
+            from_time=source_start, from_pitch=0,
+            time_span=self._page_length, pitch_span=128))
+        if not notes:
+            return
+        copies = [Live.Clip.MidiNoteSpecification(
+            pitch=n.pitch,
+            start_time=target_start + (n.start_time - source_start),
+            duration=n.duration, velocity=n.velocity, mute=n.mute)
+            for n in notes]
+        target_end = target_start + self._page_length
+        if target_end > clip.loop_end:
+            self._set_clip_loop(clip.loop_start, target_end)
+        clip.add_new_notes(tuple(copies))
+        clip.deselect_all_notes()
+        self._refresh_notes()
+
+    def _special_duplicate_step(self, source_step, target_step):
+        if not self._ensure_clip():
+            return
+        clip = self._clip
+        pitch = self._selected_pitch
+        source_time = source_step * self._step_length
+        target_time = target_step * self._step_length
+        notes = list(clip.get_notes_extended(
+            from_time=source_time, from_pitch=pitch,
+            time_span=self._step_length, pitch_span=1))
+        if not notes:
+            return
+        n = notes[0]
+        spec = Live.Clip.MidiNoteSpecification(
+            pitch=pitch, start_time=target_time,
+            duration=n.duration, velocity=n.velocity, mute=n.mute)
+        if target_time + self._step_length > clip.loop_end:
+            self._set_clip_loop(clip.loop_start,
+                                target_time + self._step_length)
+        clip.add_new_notes((spec,))
+        clip.deselect_all_notes()
+        self._refresh_notes()
+
     def _update_step_leds(self):
         if self._grid_matrix is None:
             return
@@ -932,9 +1546,21 @@ class DrumStepSequencerComponent(Component):
                 for x in range(8):
                     self._set_grid_light(x, y, self._step_loop_color(y * 8 + x))
             return
+        src = self._duplicate_source
+        # Step source is keyed by GLOBAL step index. Only highlight when
+        # the source falls inside the currently-viewed page.
+        source_step_in_page = None
+        if src is not None and src[0] == "step":
+            global_step = src[1]
+            local = global_step - self._page_index * STEPS_PER_PAGE
+            if 0 <= local < STEPS_PER_PAGE:
+                source_step_in_page = local
         for y in range(4):
             for x in range(8):
-                self._set_grid_light(x, y, self._step_color(y * 8 + x))
+                step = y * 8 + x
+                self._set_grid_light(x, y, self._step_color(step))
+                if step == source_step_in_page:
+                    self._set_grid_light_blink(x, y, 3)  # WHITE blink
 
     def _step_loop_color(self, step):
         if not liveobj_valid(self._clip) and not self._selected_track_can_hold_midi():
@@ -988,21 +1614,54 @@ class DrumStepSequencerComponent(Component):
         # fall back to `NoteEmpty` (dim grey). Showing the color regardless
         # of whether the pad has notes in the clip makes the drum-rack layout
         # visible at a glance, Push-2-style.
+        # Pads whose pitch has a note firing AT the playhead get
+        # `NotePlaying` (white) on top of any base color — gives the user
+        # a real-time view of which drum hits are firing.
+        playing = self._playing_pitches()
+        src = self._duplicate_source
+        source_pad_pitch = src[1] if src is not None and src[0] == "pad" else None
+        # While special shift is held, dim pads with NO notes so the user
+        # can see which drum pads actually have content (useful to know
+        # what's about to be duplicated/deleted before tapping).
+        emphasize_filled = self._special_shift_held
         for y in range(4):
             for x in range(4):
                 pitch = self._pitch_for_note_button(x, y)
+                if pitch in playing:
+                    self._set_grid_light(x, y + 4, "DrumSequencer.NotePlaying")
+                    continue
                 if pitch == self._selected_pitch:
                     self._set_grid_light(x, y + 4, "DrumSequencer.NoteSelected")
-                    continue
-                pad = self._drum_pad_for_pitch(pitch)
-                palette = self._color_for_drum_pad(pad) if liveobj_valid(pad) else None
-                if palette is not None and palette > 0:
-                    self._set_grid_light_palette(x, y + 4, palette)
-                    continue
-                if liveobj_valid(pad) and self._has_any_note_for_pitch(pitch):
-                    self._set_grid_light(x, y + 4, "DrumSequencer.NoteFilled")
                 else:
-                    self._set_grid_light(x, y + 4, "DrumSequencer.NoteEmpty")
+                    pad = self._drum_pad_for_pitch(pitch)
+                    palette = self._color_for_drum_pad(pad) if liveobj_valid(pad) else None
+                    has_notes = (liveobj_valid(pad)
+                                 and self._has_any_note_for_pitch(pitch))
+                    if emphasize_filled and not has_notes:
+                        # Special-shift overview: pad has no notes → grey out,
+                        # ignore the drum-rack color so empty pads read clearly.
+                        self._set_grid_light(x, y + 4, "DrumSequencer.NoteEmpty")
+                    elif palette is not None and palette > 0:
+                        self._set_grid_light_palette(x, y + 4, palette)
+                    elif has_notes:
+                        self._set_grid_light(x, y + 4, "DrumSequencer.NoteFilled")
+                    else:
+                        self._set_grid_light(x, y + 4, "DrumSequencer.NoteEmpty")
+                # Duplicate-source blink overlay (Programmer ch 1) — drawn
+                # AFTER the static color so the firmware animates between
+                # the two. Re-applied on every refresh to survive playhead
+                # ticks (channel-0 writes reset the blink).
+                if pitch == source_pad_pitch:
+                    self._set_grid_light_blink(x, y + 4, 3)  # WHITE blink
+
+    def _playing_pitches(self):
+        """Pitches with a note currently firing at the playhead. Empty
+        when the clip isn't playing or the song is stopped."""
+        if self._playhead is None or not self._notes:
+            return set()
+        ph = self._playhead
+        return {n.pitch for n in self._notes
+                if n.start_time <= ph < n.start_time + n.duration}
 
     def _color_for_drum_pad(self, pad):
         """Return the Launchpad palette index for `pad`'s color, or None when
@@ -1049,12 +1708,17 @@ class DrumStepSequencerComponent(Component):
             self._render_velocity_overlay()
             return
         grid_mode = self._bottom_right_mode == BOTTOM_RIGHT_MODE_GRID
+        src = self._duplicate_source
+        source_page_idx = (src[1] if src is not None and src[0] == "page"
+                           and not grid_mode else None)
         for y in range(4):
             for x in range(4):
                 index = y * 4 + x
                 color = (self._grid_cell_color(index) if grid_mode
                          else self._loop_color(index))
                 self._set_grid_light(x + 4, y + 4, color)
+                if index == source_page_idx:
+                    self._set_grid_light_blink(x + 4, y + 4, 3)  # WHITE blink
 
     def _grid_cell_color(self, index):
         """LED color for a grid-resolution cell in the bottom-right 4x4 while
@@ -1169,15 +1833,63 @@ class DrumStepSequencerComponent(Component):
             self._on_control_button_value(index, value)
         return listener
 
+    def set_user_mode_button(self, button):
+        """Plumb the parent's User button. While it's held, our scene
+        column doubles as the main-mode selector — gate listener + LEDs."""
+        self._user_mode_button = button
+
+    def _is_main_mode_selector_held(self):
+        return (self._user_mode_button is not None
+                and self._user_mode_button.is_pressed())
+
     def _on_control_button_value(self, index, value):
         if not self.is_enabled():
             return
+        # Slot 5 = sequencer shift modifier, parent-owned. Parent's
+        # `__on_sequencer_shift_button_value` tracks press/release and
+        # drives our `_device_shift_held` via set_device_shift_held(),
+        # so the sequencer-side listener does nothing for this slot.
+        if index == SHIFT_SLOT:
+            return
+        # Special Shift (slot 6) — tap-vs-hold modifier. Tracked on both
+        # press and release.
+        if index == SPECIAL_SHIFT_SLOT:
+            if self._is_main_mode_selector_held():
+                return
+            if value:
+                self._enter_special_shift()
+            else:
+                self._exit_special_shift()
+            return
+        # While special shift is held, slots 0-3 become row selectors and
+        # 4-5 are inert. Other slots' normal actions are suppressed.
+        if self._special_shift_held:
+            if not value:
+                return
+            if self._is_main_mode_selector_held():
+                return
+            if 0 <= index <= 3:
+                self._special_shift_row_action(row_idx=index)
+            # slot 4-5 ignored. Slot 7 stays as regular shift (untouched).
+            return
+        # Duplicate Page is a modifier — needs press AND release tracking.
+        if index == DUPLICATE_PAGE_SLOT:
+            if self._is_main_mode_selector_held():
+                return
+            self._duplicate_page_held = bool(value)
+            self._update_control_leds()
+            return
         if not value:
+            return
+        if self._is_main_mode_selector_held():
+            # Scene press belongs to the parent's mode selector — swallow.
             return
         if index == CAPTURE_SLOT:
             self._capture_midi()
         elif index == QUANTIZE_SLOT:
             self._quantize_selected()
+        elif index == DOUBLE_LOOP_SLOT:
+            self._double_loop()
         elif index == CYCLE_SLOT:
             self._toggle_bottom_right_mode()
         # Slots 2-5 are free, slot 7 is the device shift (driven elsewhere).
@@ -1236,6 +1948,7 @@ class DrumStepSequencerComponent(Component):
         # old press state, so wipe it explicitly.
         self._held_step_pads = {}
         self._consumed_step_pads = set()
+        self._disarm_velocity_overlay()
         if self.is_enabled():
             self._update_step_leds()
             self._update_control_leds()
@@ -1262,17 +1975,42 @@ class DrumStepSequencerComponent(Component):
     def _capture_midi(self):
         """Wrap `Live.Song.capture_midi()`. Gated on `can_capture_midi` so the
         call only fires when Live has something to capture; otherwise we emit a
-        status-bar notice rather than failing silently."""
+        status-bar notice rather than failing silently.
+
+        Post-capture: re-resolve the clip (capture creates or extends one),
+        re-arm the "just created" build-out gate so further note adds can
+        auto-extend the loop, and jump the page index to wherever the
+        captured content ends — saves the user from manually paging out
+        to find the new notes."""
         song = self.song
         if not getattr(song, "can_capture_midi", False):
             self._emit(Event.MIDI_CAPTURED, ok=False, reason="nothing to capture")
             return
         try:
             song.capture_midi()
-            self._emit(Event.MIDI_CAPTURED, ok=True, reason="")
         except Exception as exc:
             self._log("capture_midi failed: {}".format(exc))
             self._emit(Event.MIDI_CAPTURED, ok=False, reason=str(exc))
+            return
+        self._refresh_clip()
+        if liveobj_valid(self._clip):
+            self._clip_just_created = True
+            self._page_index = self._last_page_index()
+        self.update()
+        self._emit(Event.MIDI_CAPTURED, ok=True, reason="")
+
+    def _last_page_index(self):
+        """Page that contains the end of the loop (so the captured tail
+        is visible). 0 if there's no clip or page length is 0."""
+        if not liveobj_valid(self._clip) or self._page_length <= 0:
+            return 0
+        loop_end = max(0.0, float(self._clip.loop_end))
+        if loop_end <= 0:
+            return 0
+        # Step just inside the loop end so a loop ending exactly on a page
+        # boundary lands on the LAST page, not the empty page after it.
+        idx = int((loop_end - 1e-6) / self._page_length)
+        return max(0, idx)
 
     def _quantize_selected(self):
         """Quantize notes to the current step grid. If any step pads are held
@@ -1323,29 +2061,73 @@ class DrumStepSequencerComponent(Component):
     def _update_control_leds(self):
         if not self._control_buttons:
             return
-        # Slot 0 = Capture MIDI. Slot 1 = Quantize Selected. Slots 2-5 are
-        # free (the grid-resolution selector moved to the bottom-right 4x4
-        # in "grid" mode). Slot 6 = cycle button (loop ↔ grid). Slot 7 =
-        # device shift; bright when held or locked; session-mode binding
-        # overrides via _stop_solo_mute_modes.
+        if self._is_main_mode_selector_held():
+            # Parent's User-held mode selector owns the scene column right
+            # now — don't paint over its LEDs.
+            return
+        # Slot 0 = Capture MIDI. Slot 1 = Quantize Selected.
+        # Slot 2 = Duplicate Page (modifier). Slot 3 = Double Loop (action).
+        # Slot 4 = cycle button (loop ↔ grid). Slot 5 = sequencer shift
+        # (bright when held/locked). Slot 6 = Special Shift (cycle
+        # delete/duplicate; hold = action mode). Slot 7 = RESERVED (was
+        # device shift, now session-only — kept off in sequencer mode).
         shift_color = ("DrumSequencer.Control.Shift"
                        if self._device_shift_held
-                       else "DefaultButton.Disabled")
-        capture_color = ("DrumSequencer.Control.CaptureMidiReady"
-                         if getattr(self.song, "can_capture_midi", False)
-                         else "DrumSequencer.Control.CaptureMidi")
-        cycle_color = ("DrumSequencer.Control.CycleGrid"
-                       if self._bottom_right_mode == BOTTOM_RIGHT_MODE_GRID
-                       else "DrumSequencer.Control.CycleLoop")
-        colors = (
-          capture_color,                       # slot 0
-          "DrumSequencer.Control.Quantize",    # slot 1
-          "DefaultButton.Disabled",            # slot 2
-          "DefaultButton.Disabled",            # slot 3
-          "DefaultButton.Disabled",            # slot 4
-          "DefaultButton.Disabled",            # slot 5
-          cycle_color,                         # slot 6
-          shift_color)                         # slot 7
+                       else "DrumSequencer.Control.ShiftIdle")
+        # While special shift is held, slots 0-3 become row selectors and
+        # 4-5 are blacked out. Slot 6 shows the live mode (bright).
+        if self._special_shift_held:
+            mode = self._special_shift_mode
+            row_idle = ("DrumSequencer.Control.SpecialDeleteHalf"
+                        if mode == "delete"
+                        else "DrumSequencer.Control.SpecialDuplicateHalf")
+            row_armed = ("DrumSequencer.Control.SpecialDelete"
+                         if mode == "delete"
+                         else "DrumSequencer.Control.SpecialDuplicate")
+            special_color = row_armed
+            # Row selectors highlight the captured source if any. For
+            # duplicate, source-row's slot lights up brighter so the user
+            # knows what was captured.
+            def _row_color(row_idx):
+                src = self._duplicate_source
+                if (mode == "duplicate" and src is not None
+                        and src[0] == "row" and src[1] == row_idx
+                        and src[2] == self._page_index):
+                    return row_armed
+                return row_idle
+            colors = (
+              _row_color(0),                          # slot 0 = row 0
+              _row_color(1),                          # slot 1 = row 1
+              _row_color(2),                          # slot 2 = row 2
+              _row_color(3),                          # slot 3 = row 3
+              "DefaultButton.Disabled",               # slot 4
+              shift_color,                            # slot 5 = seq shift
+              special_color,                          # slot 6 (held)
+              "DefaultButton.Disabled")               # slot 7 reserved
+        else:
+            capture_color = ("DrumSequencer.Control.CaptureMidiReady"
+                             if getattr(self.song, "can_capture_midi", False)
+                             else "DrumSequencer.Control.CaptureMidi")
+            cycle_color = ("DrumSequencer.Control.CycleGrid"
+                           if self._bottom_right_mode == BOTTOM_RIGHT_MODE_GRID
+                           else "DrumSequencer.Control.CycleLoop")
+            duplicate_color = ("DrumSequencer.Control.DuplicatePageHeld"
+                               if self._duplicate_page_held
+                               else "DrumSequencer.Control.DuplicatePage")
+            # Idle slot 6 shows the current cycle mode (half-bright) so
+            # the user knows which action a hold will execute.
+            special_idle = ("DrumSequencer.Control.SpecialDeleteHalf"
+                            if self._special_shift_mode == "delete"
+                            else "DrumSequencer.Control.SpecialDuplicateHalf")
+            colors = (
+              capture_color,                          # slot 0
+              "DrumSequencer.Control.Quantize",       # slot 1
+              duplicate_color,                        # slot 2
+              "DrumSequencer.Control.DoubleLoop",     # slot 3
+              cycle_color,                            # slot 4
+              shift_color,                            # slot 5 = seq shift
+              special_idle,                           # slot 6
+              "DefaultButton.Disabled")               # slot 7 reserved
         for index, button in enumerate(self._control_buttons):
             try:
                 button.set_light(colors[index] if self.is_enabled() else "DefaultButton.Disabled")
@@ -1360,7 +2142,7 @@ class DrumStepSequencerComponent(Component):
                 pass
 
     def _selected_track_can_hold_midi(self):
-        track = self.song.view.selected_track
+        track = self._resolve_target_track()
         return liveobj_valid(track) and getattr(track, "has_midi_input", True)
 
     def _turn_matrices_off(self):
@@ -1385,6 +2167,27 @@ class DrumStepSequencerComponent(Component):
         try:
             note = button.original_identifier()
             status = NOTE_ON_STATUS + PROGRAMMER_LED_CHANNEL
+            self.canonical_parent._send_midi((status, note, palette_value), optimized=False)
+        except Exception:
+            pass
+
+    def _set_grid_light_blink(self, x, y, palette_value):
+        """Make a pad blink between its previously-set static color and
+        `palette_value`. Uses Programmer-mode channel 1 (flashing). To
+        stop the blink, re-send a static color on channel 0 — the
+        animation engine resets on the next channel-0 write.
+
+        Used for the duplicate-mode source highlight: after the user's
+        first tap, the captured cell blinks until the second tap
+        completes the copy (or the gesture is reset)."""
+        button = self._get_grid_button(x, y)
+        if button is None:
+            return
+        try:
+            note = button.original_identifier()
+            # Channel 1 = flashing in Programmer mode. PROGRAMMER_LED_CHANNEL
+            # is 0 (static); +1 = blink.
+            status = NOTE_ON_STATUS + PROGRAMMER_LED_CHANNEL + 1
             self.canonical_parent._send_midi((status, note, palette_value), optimized=False)
         except Exception:
             pass

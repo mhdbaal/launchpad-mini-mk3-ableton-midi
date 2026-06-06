@@ -4,9 +4,18 @@ from .events import Event
 
 
 _MODE_LABELS = {
-    "session":          "Session",
-    "drum_sequence":    "Drum Sequencer",
-    "melodic_sequence": "Melodic Sequencer",
+    "session":              "Session",
+    "drum_sequence":        "Drum Sequencer",
+    "melodic_sequence":     "Melodic Sequencer",
+    "drum_64_sequence":     "Drum 64-Step Sequencer",
+    "drum_4_track_sequence": "Drum 4-Track Sequencer",
+    "chord_mode":           "Chord Pad",
+}
+
+_MATRIX_MODE_LABELS = {
+    "edit":      "edit",
+    "loop_pick": "loop pick",
+    "grid_pick": "grid pick",
 }
 
 _ERR_MODE_PREFIX = {
@@ -59,6 +68,22 @@ _FORMATTERS = {
                    else "Capture MIDI: {}".format(p.get("reason", "unavailable"))),
     Event.DRUM_BOTTOM_RIGHT_MODE:
         lambda p: "Bottom-right: {} selector".format(p["mode"]),
+    Event.DRUM_PAGE_DUPLICATED:
+        lambda p: ("Duplicate page: nothing on page {}".format(p["source"])
+                   if p["notes"] == 0
+                   else "Duplicate page {} → {} ({} note{})".format(
+                       p["source"], p["target"], p["notes"],
+                       "" if p["notes"] == 1 else "s")),
+    Event.DRUM_LOOP_DOUBLED:
+        lambda p: "Double loop: {:.2f} → {:.2f} ({} note{} copied)".format(
+            p["old_length"], p["new_length"], p["notes"],
+            "" if p["notes"] == 1 else "s"),
+    Event.DRUM_64_MATRIX_MODE:
+        lambda p: "64-step matrix: {}".format(
+            _MATRIX_MODE_LABELS.get(p["mode"], p["mode"])),
+    Event.DRUM_4_TRACK_MATRIX_MODE:
+        lambda p: "4-track matrix: {}".format(
+            _MATRIX_MODE_LABELS.get(p["mode"], p["mode"])),
     Event.MELODIC_BOTTOM_RIGHT_MODE:
         lambda p: "Bottom-right: {} selector".format(p["mode"]),
     Event.DRUM_NAV_CHANGED:
@@ -96,12 +121,67 @@ _FORMATTERS = {
                        p["count"], "" if p["count"] == 1 else "s",
                        p["scope"], p["grid"])),
 
+    Event.CHORD_KEY_CHANGED:
+        lambda p: "Chord key: {}".format(p["key_name"]),
+    Event.CHORD_SCALE_CHANGED:
+        lambda p: "Chord scale: {}".format(p["scale_name"]),
+    Event.CHORD_TYPE_CHANGED:
+        lambda p: "Chord type: {}".format(p["type_name"]),
+    Event.CHORD_INVERSION_CHANGED:
+        lambda p: "Chord inversion: {}".format(p["inversion"]),
+    Event.CHORD_NAV_CHANGED:
+        lambda p: "Chord {} | octave {:+d} | semitone {:+d}".format(
+            p["key_name"], p["octave"], p["semitone"]),
+    # CHORD_TRIGGERED / CHORD_RELEASED are intentionally NOT in the status
+    # bar — they fire on every pad press and would spam the message line.
+    # They're still emitted for M4L / external listeners.
+
+    Event.EDIT_MODE_CHANGED:
+        lambda p: "Edit mode" if p["on"] else "Exit edit mode",
+    Event.EDIT_CLIP_DELETED:
+        lambda p: "Edit: clip deleted (track {}, scene {})".format(
+            p["track"] + 1, p["scene"] + 1),
+    Event.EDIT_CLIP_DUPLICATED:
+        lambda p: "Edit: clip duplicated (track {}, scene {})".format(
+            p["track"] + 1, p["scene"] + 1),
+    Event.EDIT_CLIP_MOVED:
+        lambda p: "Edit: clip moved (T{}/S{} → T{}/S{})".format(
+            p["from_track"] + 1, p["from_scene"] + 1,
+            p["to_track"] + 1, p["to_scene"] + 1),
+    Event.EDIT_SCENE_DELETED:
+        lambda p: "Edit: scene {} deleted".format(p["scene"] + 1),
+    Event.EDIT_SCENE_DUPLICATED:
+        lambda p: "Edit: scene {} duplicated".format(p["scene"] + 1),
+    Event.EDIT_MOVE_SOURCE_SET:
+        lambda p: "Edit move: source set ({}) — tap target".format(p["kind"]),
+    Event.EDIT_MOVE_CANCELLED:
+        lambda p: "Edit move: cancelled",
+    Event.EDIT_CLIP_COLOR_CYCLED:
+        lambda p: "Edit: clip color → {} (T{}/S{})".format(
+            p["color_index"], p["track"] + 1, p["scene"] + 1),
+    Event.EDIT_SCENE_COLOR_CYCLED:
+        lambda p: "Edit: scene {} color → {}".format(
+            p["scene"] + 1, p["color_index"]),
+    Event.EDIT_STOP_ALL_CLIPS:
+        lambda p: "Stop all clips",
+    Event.EDIT_UNDO:
+        lambda p: "Undo",
+    Event.EDIT_REDO:
+        lambda p: "Redo",
+
     Event.ERR_NEED_MIDI_SLOT:
         lambda p: "{}: select a MIDI clip slot".format(_ERR_MODE_PREFIX.get(p["mode"], p["mode"])),
     Event.ERR_NEED_MIDI_TRACK:
         lambda p: "{}: select a MIDI track".format(_ERR_MODE_PREFIX.get(p["mode"], p["mode"])),
     Event.ERR_NOT_MIDI:
         lambda p: "{}: selected clip is not MIDI".format(_ERR_MODE_PREFIX.get(p["mode"], p["mode"])),
+
+    Event.TRACK_PINNED:
+        lambda p: "{}: pinned to '{}'".format(
+            _MODE_LABELS.get(p["mode"], p["mode"]), p["track_name"]),
+    Event.TRACK_UNPINNED:
+        lambda p: "{}: following selection".format(
+            _MODE_LABELS.get(p["mode"], p["mode"])),
 }
 
 

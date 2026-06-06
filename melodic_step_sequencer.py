@@ -100,6 +100,10 @@ VELOCITY_MAX = 127
 VELOCITY_OVERLAY_LEVELS = 16
 VELOCITY_OVERLAY_ROW_BOTTOM = 7  # levels 1..8
 VELOCITY_OVERLAY_ROW_TOP = 6     # levels 9..16
+# Hold delay before the velocity overlay arms — short enough to feel
+# responsive when the user genuinely wants to edit velocity, long enough
+# that brief taps for note toggling don't briefly flash the bar.
+VELOCITY_OVERLAY_HOLD_DELAY = 0.25
 
 # Scene-button slot indices in melodic_sequence mode (top → bottom):
 #     0: Capture MIDI (shift NOT held) / Chromatic toggle (shift held)
@@ -111,6 +115,7 @@ CAPTURE_SLOT = 0
 QUANTIZE_SLOT = 1
 CHROMATIC_SLOT = CAPTURE_SLOT      # same physical slot, dual-purpose by shift state
 SCALE_CYCLE_SLOT = QUANTIZE_SLOT   # same physical slot, dual-purpose
+SHIFT_SLOT = 5                     # sequencer shift modifier (parent-owned)
 CYCLE_SLOT = 6
 
 # Bottom-right 4x4 modes. Cycled by slot 6. Default = "pitch" (the 4x4 stays
@@ -140,6 +145,9 @@ class MelodicStepSequencerComponent(Component):
         # Device shift (scene_launch_buttons_raw[7]) acts as a modifier: while
         # held, the grid-resolution slots 0-3 are active; otherwise greyed.
         self._device_shift_held = False
+        # Parent's User button — held = mode selector active, gate scene
+        # listener + LED writes (parent paints those slots itself).
+        self._user_mode_button = None
         self._loop_press_points = []
         self._loop_range_active = False
         # Step-grid loop range picker — active while device shift is held.
@@ -179,6 +187,15 @@ class MelodicStepSequencerComponent(Component):
         self._led_debug_count = 0
         self._delayed_update_task = self._tasks.add(task.sequence(task.wait(0.1), task.run(self.update)))
         self._delayed_update_task.kill()
+        # Velocity overlay arming: a cell must be held continuously for
+        # VELOCITY_OVERLAY_HOLD_DELAY seconds before the bar appears. The
+        # task is restarted on every press; the release path disarms when
+        # the held set empties.
+        self._velocity_overlay_armed = False
+        self._velocity_overlay_arm_task = self._tasks.add(
+            task.sequence(task.wait(VELOCITY_OVERLAY_HOLD_DELAY),
+                          task.run(self._arm_velocity_overlay)))
+        self._velocity_overlay_arm_task.kill()
         self._on_detail_clip_changed.subject = self.song.view
         self._on_selected_track_changed.subject = self.song.view
         self._on_can_capture_midi_changed.subject = self.song
@@ -231,6 +248,7 @@ class MelodicStepSequencerComponent(Component):
             self._held_grid_buttons = set()
             self._held_note_cells = {}
             self._consumed_note_cells = set()
+            self._disarm_velocity_overlay()
             self._preview_mode = False
             # Leaving sequencer mode ends "build-out": the next session treats
             # the clip's loop as sacred again.
@@ -388,18 +406,23 @@ class MelodicStepSequencerComponent(Component):
         if self._device_shift_held and PITCH_ROW_MIN <= y <= PITCH_ROW_MAX:
             self._handle_step_loop_press(x, bool(value))
             return
-        # Step-hold velocity selector: when a held cell has a note, the bottom
-        # two rows (y=6, y=7) become a 16-level velocity bar. Wins over both
-        # pitch toggling and the bottom-right grid-resolution selector.
-        # Press = apply velocity; release on the overlay is a no-op so the
-        # underlying pitch toggle never fires from a selector tap.
+        # Step-hold velocity selector: once a cell has been held past the
+        # arm delay, the bottom two rows (y=6, y=7) become a 16-level
+        # velocity bar. Wins over both pitch toggling and the bottom-right
+        # grid-resolution selector. Press = apply velocity; release of a
+        # bar-tap is a no-op. Release of a cell that was ALREADY held
+        # before the overlay armed falls through to the pitch handler
+        # below so held tracking gets cleaned up.
         if self._velocity_overlay_should_show() and y in (
                 VELOCITY_OVERLAY_ROW_TOP, VELOCITY_OVERLAY_ROW_BOTTOM):
             if value:
                 level = self._velocity_overlay_cell_to_level(x, y)
                 if level is not None:
                     self._apply_velocity_from_selector(level)
-            return
+                return
+            if (x, y) not in self._held_grid_buttons:
+                return
+            # else fall through to the pitch release path
         # Bottom-right 4x4 in "grid" mode = resolution selector (overrides
         # pitch). Routed before the pitch path; shift gestures above already
         # returned, so this is "no shift" by elimination.
@@ -422,6 +445,8 @@ class MelodicStepSequencerComponent(Component):
             self._held_note_cells.pop((x, y), None)
             consumed = (x, y) in self._consumed_note_cells
             self._consumed_note_cells.discard((x, y))
+            if not self._held_grid_buttons:
+                self._disarm_velocity_overlay()
             self.update()  # repaint to drop StepHeld
             if consumed or self._preview_mode:
                 return
@@ -432,6 +457,9 @@ class MelodicStepSequencerComponent(Component):
         if (x, y) in self._held_grid_buttons:
             return
         self._held_grid_buttons.add((x, y))
+        # Restart the velocity-overlay arm timer on every press. Brief
+        # taps disarm via the release path before the timer fires.
+        self._velocity_overlay_arm_task.restart()
         self._log("grid pressed: {},{} pitch={} step={}".format(x, y, pitch, step))
         # Record selection if the pad maps to an existing note. The toggle
         # itself happens on release (see above) — pressing the pad is the
@@ -829,10 +857,19 @@ class MelodicStepSequencerComponent(Component):
             self._on_control_button_value(index, value)
         return listener
 
+    def set_user_mode_button(self, button):
+        self._user_mode_button = button
+
+    def _is_main_mode_selector_held(self):
+        return (self._user_mode_button is not None
+                and self._user_mode_button.is_pressed())
+
     def _on_control_button_value(self, index, value):
         if not self.is_enabled():
             return
         if not value:
+            return
+        if self._is_main_mode_selector_held():
             return
         if index == CHROMATIC_SLOT:
             # Slot 0 dual-purpose: chromatic toggle when shift held,
@@ -859,6 +896,22 @@ class MelodicStepSequencerComponent(Component):
         """
         if self.is_enabled():
             self._adjust_pitch_offset(delta)
+
+    def nav_page(self, delta):
+        """Public: navigate the visible page by `delta` (typically ±1).
+        Bound to the ← / → top arrows in melodic_sequence main mode.
+        Clamps to [0, last_page] where last_page is derived from
+        `clip.loop_end / page_length`. No-op when no clip is open."""
+        if not self.is_enabled() or not liveobj_valid(self._clip):
+            return
+        max_idx = self._last_page_index()
+        target = max(0, min(self._page_index + delta, max_idx))
+        if target == self._page_index:
+            return
+        self._page_index = target
+        self._emit(Event.MELODIC_PAGE_SCOPED,
+                   start=target + 1, end=target + 1)
+        self.update()
 
     def _set_grid_option(self, index):
         """Pick a grid resolution from `GRID_OPTIONS` (0..15)."""
@@ -954,16 +1007,34 @@ class MelodicStepSequencerComponent(Component):
         return "MelodicSequencer.Control.Quantize"
 
     def _capture_midi(self):
+        """Post-capture: re-resolve the clip, re-arm the build-out gate,
+        and jump to the page where the captured content ends so the user
+        sees the new notes immediately."""
         song = self.song
         if not getattr(song, "can_capture_midi", False):
             self._emit(Event.MIDI_CAPTURED, ok=False, reason="nothing to capture")
             return
         try:
             song.capture_midi()
-            self._emit(Event.MIDI_CAPTURED, ok=True, reason="")
         except Exception as exc:
             self._log("capture_midi failed: {}".format(exc))
             self._emit(Event.MIDI_CAPTURED, ok=False, reason=str(exc))
+            return
+        self._refresh_clip()
+        if liveobj_valid(self._clip):
+            self._clip_just_created = True
+            self._page_index = self._last_page_index()
+        self.update()
+        self._emit(Event.MIDI_CAPTURED, ok=True, reason="")
+
+    def _last_page_index(self):
+        if not liveobj_valid(self._clip) or self._page_length <= 0:
+            return 0
+        loop_end = max(0.0, float(self._clip.loop_end))
+        if loop_end <= 0:
+            return 0
+        idx = int((loop_end - 1e-6) / self._page_length)
+        return max(0, idx)
 
     def _quantize_selected(self):
         """Quantize notes to the current step grid. If any pitch cells are
@@ -1009,17 +1080,34 @@ class MelodicStepSequencerComponent(Component):
         self.update()
 
     def _velocity_overlay_should_show(self):
-        """Overlay is active iff at least one held cell has a note AND device
-        shift is NOT held (shift gestures keep priority for rows 1..7)."""
+        """Overlay is active once the hold-arm task has fired AND device
+        shift is NOT held (shift gestures keep priority for rows 1..7).
+        The arm fires when a cell has been held continuously for
+        VELOCITY_OVERLAY_HOLD_DELAY — brief taps for note toggling don't
+        flash the bar."""
+        return self._velocity_overlay_armed and not self._device_shift_held
+
+    def _arm_velocity_overlay(self):
+        """Promote the current hold into a velocity-edit gesture. Bails
+        if the user already released or shift is now held."""
+        if not self.is_enabled():
+            return
         if self._device_shift_held:
-            return False
-        for cell_info in self._held_note_cells.values():
-            if cell_info is None:
-                continue
-            step, pitch, _ = cell_info
-            if self._find_note_at_step_pitch(step, pitch) is not None:
-                return True
-        return False
+            return
+        if not self._held_grid_buttons:
+            return
+        if self._velocity_overlay_armed:
+            return
+        self._velocity_overlay_armed = True
+        self.update()
+
+    def _disarm_velocity_overlay(self):
+        """Kill the pending arm task and clear the armed flag."""
+        self._velocity_overlay_arm_task.kill()
+        if self._velocity_overlay_armed:
+            self._velocity_overlay_armed = False
+            if self.is_enabled():
+                self.update()
 
     def _velocity_overlay_cell_to_level(self, x, y):
         """Cell (x in 0..7, y in {6, 7}) → level 1..16. Bottom row (y=7) =
@@ -1065,24 +1153,46 @@ class MelodicStepSequencerComponent(Component):
             self._set_grid_light_palette(x, y, palette)
 
     def _apply_velocity_from_selector(self, level):
-        """Set every held note's velocity to `level`'s value. Marks held cells
-        consumed so their release doesn't toggle the note. Emits
-        MELODIC_VELOCITY_CHANGED once."""
-        if not self.is_enabled() or not liveobj_valid(self._clip):
+        """Set every held note's velocity to `level`'s value, OR create new
+        notes for held cells that sit on empty positions. Iterates the full
+        held set (`_held_grid_buttons`) rather than just cells-with-notes so
+        empty-cell creation works Push-style. Marks held cells consumed so
+        their release doesn't toggle. Emits MELODIC_VELOCITY_CHANGED once."""
+        if not self.is_enabled() or not self._ensure_clip():
             return
         velocity = self._velocity_for_level(level)
+        new_notes = []
         modified = False
-        for cell, cell_info in list(self._held_note_cells.items()):
-            if cell_info is None:
-                continue
-            step, pitch, _ = cell_info
+        for (x, y) in list(self._held_grid_buttons):
+            pitch = self._pitch_for_row(y)
+            step = self._page_index * STEPS_PER_PAGE + x
             note = self._find_note_at_step_pitch(step, pitch)
             if note is None:
+                # Empty held cell → create a note at this level's
+                # velocity. Track it in _held_note_cells so subsequent bar
+                # taps adjust the same note.
+                start = step * self._step_length
+                new_notes.append(Live.Clip.MidiNoteSpecification(
+                    pitch=pitch, start_time=start,
+                    duration=self._step_length, velocity=velocity, mute=False))
+                self._held_note_cells[(x, y)] = (step, pitch, start)
+                self._consumed_note_cells.add((x, y))
+                self._ensure_loop_contains_time(start + self._step_length)
+                modified = True
                 continue
             if int(note.velocity) != velocity:
                 self._replace_note_at(note, velocity=velocity)
                 modified = True
-            self._consumed_note_cells.add(cell)
+            # Refresh the tracked start in case _replace_note_at moved it
+            # (it shouldn't here, but defensive — and cover cells that
+            # were held but never recorded in _held_note_cells because
+            # the press path saw an empty cell at the time).
+            self._held_note_cells[(x, y)] = (step, pitch, note.start_time)
+            self._consumed_note_cells.add((x, y))
+        if new_notes:
+            self._clip.add_new_notes(tuple(new_notes))
+            self._clip.deselect_all_notes()
+            self._refresh_notes()
         if modified:
             self._emit(Event.MELODIC_VELOCITY_CHANGED, velocity=velocity)
         self.update()
@@ -1125,6 +1235,7 @@ class MelodicStepSequencerComponent(Component):
         # transition invalidate them.
         self._held_note_cells = {}
         self._consumed_note_cells = set()
+        self._disarm_velocity_overlay()
         # Drop step-loop press anchors so a held step pad can't leak across
         # a shift transition. The scoped loop itself stays put.
         if not pressed:
@@ -1157,10 +1268,13 @@ class MelodicStepSequencerComponent(Component):
     def _update_control_leds(self):
         if not self._control_buttons:
             return
+        if self._is_main_mode_selector_held():
+            return
         # Slot 0 = Capture / Chromatic (dual via shift). Slot 1 = Quantize /
-        # Scale cycle. Slots 2-5 = free (grid resolutions moved to the
-        # bottom-right 4x4 in "grid" mode). Slot 6 = cycle (pitch ↔ grid).
-        # Slot 7 = device shift; session mode overrides via _stop_solo_mute_modes.
+        # Scale cycle. Slots 2-4 = free (grid resolutions moved to the
+        # bottom-right 4x4 in "grid" mode). Slot 5 = sequencer shift
+        # (relocated from slot 7). Slot 6 = cycle (pitch ↔ grid). Slot 7
+        # = RESERVED (was device shift; now session-only).
         shift_color = ("MelodicSequencer.Control.Shift"
                        if self._device_shift_held
                        else "DefaultButton.Disabled")
@@ -1170,9 +1284,9 @@ class MelodicStepSequencerComponent(Component):
           "DefaultButton.Disabled",            # slot 2
           "DefaultButton.Disabled",            # slot 3
           "DefaultButton.Disabled",            # slot 4
-          "DefaultButton.Disabled",            # slot 5
+          shift_color,                         # slot 5 = seq shift
           self._cycle_color(),                 # slot 6
-          shift_color)                         # slot 7
+          "DefaultButton.Disabled")            # slot 7 reserved
         for index, button in enumerate(self._control_buttons):
             try:
                 button.set_light(colors[index] if self.is_enabled() else "DefaultButton.Disabled")

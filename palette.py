@@ -28,6 +28,7 @@ DRUM_SEQUENCER_COLOR_VALUES = {
     "DrumSequencer.NoteEmpty": 1,
     "DrumSequencer.NoteFilled": 43,
     "DrumSequencer.NoteSelected": 96,
+    "DrumSequencer.NotePlaying": 21,        # GREEN (live note hitting at playhead)
     "DrumSequencer.Loop.Outside": 39,
     "DrumSequencer.Loop.Inside": 37,
     "DrumSequencer.Loop.Selected": 77,
@@ -40,11 +41,19 @@ DRUM_SEQUENCER_COLOR_VALUES = {
     "DrumSequencer.Control.GridSelected": 3,
     "DrumSequencer.Control.Reset": 84,
     "DrumSequencer.Control.Shift": 96,
+    "DrumSequencer.Control.ShiftIdle": 14,          # AMBER_HALF (dim anchor)
     "DrumSequencer.Control.CaptureMidi": 27,        # GREEN_HALF (dim until capturable)
     "DrumSequencer.Control.CaptureMidiReady": 21,   # GREEN
     "DrumSequencer.Control.Quantize": 77,           # AQUA
     "DrumSequencer.Control.CycleLoop": 77,          # AQUA (bottom-right = loop)
     "DrumSequencer.Control.CycleGrid": 9,           # ORANGE (bottom-right = grid)
+    "DrumSequencer.Control.DuplicatePage": 125,     # YELLOW_HALF (modifier idle)
+    "DrumSequencer.Control.DuplicatePageHeld": 97,  # YELLOW (modifier held)
+    "DrumSequencer.Control.DoubleLoop": 53,         # PURPLE (single-tap action)
+    "DrumSequencer.Control.SpecialDelete": 5,            # RED
+    "DrumSequencer.Control.SpecialDeleteHalf": 7,        # RED_HALF
+    "DrumSequencer.Control.SpecialDuplicate": 21,        # GREEN
+    "DrumSequencer.Control.SpecialDuplicateHalf": 27,    # GREEN_HALF
     "DrumSequencer.Control.GridTernary": 53,        # PURPLE (ternary cells dim)
 }
 
@@ -84,6 +93,29 @@ MELODIC_COLOR_VALUES = {
     "MelodicSequencer.Control.CycleGrid": 9,            # ORANGE (grid resolution mode)
     "MelodicSequencer.Control.GridTernary": 53,         # PURPLE (ternary cells dim)
     "MelodicSequencer.StepHeld": 96,
+}
+
+
+# Chord-pad mode palette. Kept in sync with skin.py's Colors.ChordPad — when
+# adding a ChordPad.* color, update both. Mode-button (User button) LED is
+# driven from device_profile.LED_CHORD instead of this dict; that's a CC
+# write rather than a pad-color Note On, so it doesn't go through the skin.
+CHORD_COLOR_VALUES = {
+    "DefaultButton.Disabled": 0,
+    "ChordPad.Root": 96,           # AMBER
+    "ChordPad.RootDim": 14,        # AMBER_HALF
+    "ChordPad.ChordTone": 41,      # BLUE
+    "ChordPad.ChordToneDim": 43,   # BLUE_HALF
+    "ChordPad.ScaleTone": 27,      # GREEN_HALF
+    "ChordPad.ScaleToneDim": 1,    # DARK_GREY (just barely lit)
+    "ChordPad.Pressed": 3,         # WHITE
+    "ChordPad.Control.CaptureMidi": 27,        # GREEN_HALF (dim until capturable)
+    "ChordPad.Control.CaptureMidiReady": 21,   # GREEN (capture possible)
+    "ChordPad.Control.Key": 96,                # AMBER
+    "ChordPad.Control.Scale": 77,              # AQUA — same as MelodicSequencer.ScaleCycle
+    "ChordPad.Control.ChordType": 53,          # PURPLE — same as mode-button LED
+    "ChordPad.Control.Inversion": 97,          # YELLOW
+    "ChordPad.Control.Shift": 96,              # AMBER (seq-shift held feedback)
 }
 
 
