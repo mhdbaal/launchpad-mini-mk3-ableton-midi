@@ -77,7 +77,7 @@ Shared `.py` files live at the **repo root**; device-specific modules live in `m
 | `m4l_subscriber.py` | Maps events to `(msg_id, args)`, forwards to dispatcher. No-op without LP Notify device. |
 | `notification_dispatcher.py` | Discovers LP Notify device on any track, binds params by name, writes `msg_id/arg1-3/seq` on `send()`. |
 | `install.sh` | WSL→Windows install, `--mini` / `--pro` / `--all` (default). Assembles root + overlay flat per device; refuses on root∩overlay basename collision. `--pro` also re-applies the factory shadow `__init__.py` (see [Pro package](#launchpad-pro-mk3-package)). Paths hard-coded for `mahed`'s machine. |
-| `factory-backup/` | Pristine `.pyc` backup of the factory `Launchpad_Pro_MK3` + `shadow__init__.py` (the auto-detection-killing shadow source). |
+| `factory-backup/` | Pristine `.pyc` backups of the factory `Launchpad_Pro_MK3` AND `Launchpad_Mini_MK3` (versioned — `.gitignore` has an explicit `!factory-backup/**/*.pyc` exception) + `shadow__init__.py` (the auto-detection-killing shadow source). A third copy lives ON the Windows side: `_Factory_Originals_Backup.zip` at the root of Live's `MIDI Remote Scripts/` (both factory scripts + restore README; Live ignores non-directories there). |
 
 ## Key subsystems
 
