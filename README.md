@@ -241,9 +241,9 @@ The Pro port keeps the same modes and sequencers but uses the Pro's dedicated bu
 - **Clear / Duplicate** — hold + tap to delete/duplicate clips & scenes (session) or steps/pads/pages (drum sequencer). Shift+Duplicate doubles the loop.
 - **Quantise** — quantize selection in sequencer modes. **Shift+Record** — Capture MIDI.
 - **Play / Record** — dedicated transport.
-- **Note / Chord / Sequencer buttons** — switch directly to the melodic sequencer / chord pads / drum sequencer (press again to return to Session). **Shift+Sequencer** opens a picker panel on the grid to choose between the three drum variants (classic 4×8, 64-step single pad, 4-track × 16 steps); a plain Sequencer press reopens the last variant used.
+- **Note / Chord / Custom / Sequencer buttons** — plain press = the **native firmware modes** (Note, Chord with its 16 saveable chord slots, Custom Modes, hardware step sequencer), with played notes flowing straight into the armed track. **Shift+button = the custom script modes**: Shift+Note = melodic sequencer, Shift+Chord = chord pads, Shift+Sequencer = drum sequencer (again while in a drum mode = picker panel to choose between the three variants: classic 4×8, 64-step single pad, 4-track × 16 steps).
 - **Track-select row + Record Arm/Mute/Solo/Stop Clip** — mixer modes below the grid, so the full 8×8 grid stays clips and all 8 scene buttons launch scenes. Shift+Record Arm = Undo, Shift+Mute = Redo, Shift+Stop Clip = Stop All Clips.
-- **Native passthrough** — **Shift+Chord** hands the device to its firmware Chord engine (real multi-note chords, including 16 saveable custom chord slots); **Custom** lands straight on the **hardware step sequencer** (Steps layout — Note/Chord/Custom stay reachable from the device). Played notes flow straight into the armed track. Press **Session on the device** to come back to the custom script.
+- **Returning from native modes** — the script is hands-off while a native mode runs; press **Session on the device** to come back to the custom script.
 
 **The Pro script installs as a separate control surface** (`Launchpad Pro MK3 Custom`) — the factory `Launchpad Pro MK3` script is left untouched and both coexist in Live's Control Surface list.
 

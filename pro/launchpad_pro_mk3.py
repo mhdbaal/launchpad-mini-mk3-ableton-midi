@@ -13,8 +13,10 @@
 #   - Quantise (40) replaces the sequencer quantize slot.
 #   - Play (20) / Record (10) replace Drums/Keys transport; Shift+Record =
 #     Capture MIDI.
-#   - Note (94) / Sequencer (97) switch main modes directly — the User
-#     hold-to-select machinery doesn't exist here.
+#   - Top-row mode buttons: PLAIN press = the device's NATIVE mode
+#     (passthrough: Note / Chord / Custom / Sequencer firmware engines);
+#     SHIFT+press = our custom modes (melodic / chord pads / drum
+#     sequencers). The User hold-to-select machinery doesn't exist here.
 #   - The track-select row (CC 101-108) + function row (Record Arm/Mute/
 #     Solo/Stop Clip, CC 1/2/3/8) carry the mixer modes, so the 8x8 grid
 #     keeps all 8 rows for clips and all 8 scene buttons launch scenes.
@@ -403,9 +405,10 @@ class Launchpad_Pro_MK3(NovationBase):
         self._chord_pad_mode.set_control_buttons(self._elements.scene_launch_buttons_raw)
 
     def _create_variant_picker(self):
-        """Shift+Sequencer → grid overlay panel with one band per drum
-        variant. Picking a band switches the main mode; a plain Sequencer
-        press cancels back to where the user came from."""
+        """Shift+Sequencer (while already in a drum variant) → grid
+        overlay panel with one band per drum variant. Picking a band
+        switches the main mode; Shift+Sequencer again or Session cancels
+        back to where the user came from."""
         self._variant_picker = DrumVariantPickerComponent(
             name="Drum_Variant_Picker",
             is_enabled=False,
@@ -414,10 +417,10 @@ class Launchpad_Pro_MK3(NovationBase):
             layer=Layer(grid_matrix="clip_launch_matrix"))
 
     def _create_main_modes(self):
-        """Direct mode buttons — Session (93), Note (94) → melodic,
-        Chord (95) → chord pads, Sequencer (97) → last drum variant
-        (Shift+Sequencer → variant picker panel). Pressing the active
-        mode's button returns to session. No hold-to-select, no cycling."""
+        """Mode registry. Entry points: Session (93) = session; Shift+Note
+        = melodic; Shift+Chord = chord pads; Shift+Sequencer = drum
+        variants (+ picker); plain Note/Chord/Custom/Sequencer = native
+        passthrough. No hold-to-select, no cycling."""
         self._main_modes = ModesComponent(name="Main_Modes",
           is_enabled=False,
           enable_skinning=False,
@@ -557,52 +560,63 @@ class Launchpad_Pro_MK3(NovationBase):
         self._main_modes.selected_mode = (
             "session" if self._main_modes.selected_mode == mode else mode)
 
-    @listens("value")
-    def __on_note_mode_button_value(self, value):
-        if value:
-            self._toggle_main_mode("melodic_sequence")
+    # Mode-button philosophy: PLAIN press = the device's NATIVE mode
+    # (passthrough — the firmware engines are the primary experience);
+    # SHIFT+press = our custom script modes. Return from native land =
+    # Session on the device (the script is deaf while native).
 
     @listens("value")
-    def __on_chord_mode_button_value(self, value):
-        """Chord (95). Plain press: our chord-pad mode (single root note
-        per pad — pair with Live's Chord MIDI effect or the future M4L
-        companion for full chords). Shift+press: NATIVE chord passthrough —
-        the firmware's chord engine plays real multi-note chords."""
+    def __on_note_mode_button_value(self, value):
+        """Note (94). Plain: NATIVE Note mode. Shift: our melodic step
+        sequencer (Shift+Note again → back to session)."""
         if not value:
             return
         if self._is_shift_pressed():
-            self._enter_native_passthrough(ids.CHORD_LAYOUT_BYTES)
+            self._toggle_main_mode("melodic_sequence")
+        else:
+            self._enter_native_passthrough(ids.NOTE_LAYOUT_BYTES)
+
+    @listens("value")
+    def __on_chord_mode_button_value(self, value):
+        """Chord (95). Plain: NATIVE chord engine (real multi-note chords
+        + 16 user chord slots). Shift: our chord-pad mode (single root
+        note per pad — pair with Live's Chord MIDI effect or the future
+        M4L companion)."""
+        if not value:
             return
-        self._toggle_main_mode("chord_mode")
+        if self._is_shift_pressed():
+            self._toggle_main_mode("chord_mode")
+        else:
+            self._enter_native_passthrough(ids.CHORD_LAYOUT_BYTES)
 
     @listens("value")
     def __on_custom_mode_button_value(self, value):
-        """Custom (96): native SEQUENCER passthrough — lands straight on
-        the hardware sequencer's Steps layout. Once native, the device's
-        own Note/Chord/Custom/Sequencer buttons all work too. Press
-        Session ON THE DEVICE to come back."""
-        if value:
-            self._enter_native_passthrough(ids.SEQUENCER_STEPS_LAYOUT_BYTES)
+        """Custom (96): NATIVE Custom Modes layout (passthrough)."""
+        if value and not self._is_shift_pressed():
+            self._enter_native_passthrough(ids.CUSTOM_LAYOUT_BYTES)
 
     @listens("value")
     def __on_sequencer_mode_button_value(self, value):
-        """Sequencer (97). Plain press: open the last-used drum variant
-        (press again → back to session). Shift+press: open the variant
-        picker panel. Press while the picker is up: cancel back to the
-        mode the picker was opened from."""
+        """Sequencer (97). Plain: NATIVE hardware sequencer (Steps
+        layout). Shift: OUR drum sequencers — opens the last-used
+        variant; Shift+press again while already in a drum variant opens
+        the variant picker panel; Shift+press while the picker is up
+        cancels back."""
         if not value:
+            return
+        if not self._is_shift_pressed():
+            self._enter_native_passthrough(ids.SEQUENCER_STEPS_LAYOUT_BYTES)
             return
         current = self._main_modes.selected_mode
         if current == VARIANT_PICKER_MODE:
             self._main_modes.selected_mode = (self._picker_return_mode
                                               or "session")
             self._picker_return_mode = None
-            return
-        if self._is_shift_pressed():
+        elif current in _DRUM_MODES:
             self._picker_return_mode = current
             self._main_modes.selected_mode = VARIANT_PICKER_MODE
-            return
-        self._toggle_main_mode(self._last_drum_variant)
+        else:
+            self._main_modes.selected_mode = self._last_drum_variant
 
     def _on_drum_variant_selected(self, mode):
         """Callback from the picker panel — commit the chosen variant."""
