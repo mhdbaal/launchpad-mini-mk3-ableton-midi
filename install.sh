@@ -99,12 +99,32 @@ install_device() {
     echo -e "${GREEN}✓ $(ls -1 "$dest_dir"/*.py | wc -l) fichiers installés ($(basename "$dest_dir"))${NC}"
 }
 
+# Neutralise l'AUTO-DÉTECTION du script factory Pro (sans toucher à son
+# code) : un __init__.py "shadow" posé à côté du __init__.pyc factory —
+# Python préfère la source au bytecode, donc seul le point d'entrée du
+# package est masqué (get_capabilities retiré → Live n'auto-assigne plus
+# le factory en double sur MIDIIN3 à chaque démarrage ; la sélection
+# manuelle reste possible). Restauration : supprimer ce seul fichier.
+# Backup complet des .pyc : factory-backup/Launchpad_Pro_MK3/ (repo).
+# Opération STRICTEMENT ADDITIVE — ne jamais transformer ceci en rm/rm -rf.
+apply_factory_shadow() {
+    local factory_dir="$DEST_PARENT/Launchpad_Pro_MK3"
+    if [ ! -f "$factory_dir/__init__.pyc" ]; then
+        echo -e "${YELLOW}⚠ Factory Launchpad_Pro_MK3 introuvable — shadow non appliqué${NC}"
+        return 0
+    fi
+    cp "$SOURCE_DIR/factory-backup/shadow__init__.py" "$factory_dir/__init__.py" \
+        && echo -e "${GREEN}✓ Shadow __init__.py appliqué au factory (auto-détection désactivée)${NC}" \
+        || echo -e "${RED}✗ Erreur application du shadow factory${NC}"
+}
+
 # NOTE: le Mini REMPLACE le script factory (choix historique). Le Pro
 # s'installe sous un nom DISTINCT — Launchpad_Pro_MK3_Custom — pour ne
 # JAMAIS toucher le script factory Launchpad_Pro_MK3 (les deux coexistent
 # dans le dropdown Control Surface de Live).
 [ "$INSTALL_MINI" = true ] && install_device mini Launchpad_Mini_MK3
 [ "$INSTALL_PRO" = true ] && install_device pro Launchpad_Pro_MK3_Custom
+[ "$INSTALL_PRO" = true ] && apply_factory_shadow
 
 # Supprimer le log Ableton (une seule fois, partagé par toute l'instance Live)
 if [ -f "$LOG_FILE" ]; then
@@ -124,4 +144,5 @@ echo "3. Allez dans Préférences → Link/Tempo/MIDI"
 echo "4. Control Surface :"
 [ "$INSTALL_MINI" = true ] && echo "   • Launchpad Mini MK3 → Input/Output: MIDIIN2/MIDIOUT2 (LPMiniMK3 MIDI)"
 [ "$INSTALL_PRO" = true ]  && echo "   • Launchpad Pro MK3 Custom → Input/Output: 1re paire 'LPProMK3 MIDI' (PAS MIDIIN3 — le Programmer mode vit sur la 1re interface)"
+[ "$INSTALL_PRO" = true ]  && echo "   • Si un slot 'Launchpad Pro MK3' (factory) traîne encore : le passer à None UNE FOIS (l'auto-détection est désactivée, il ne reviendra plus)"
 echo ""

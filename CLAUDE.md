@@ -76,7 +76,8 @@ Shared `.py` files live at the **repo root**; device-specific modules live in `m
 | `status_bar_subscriber.py` | Single owner of every user-visible `show_message` wording (`_FORMATTERS` table). |
 | `m4l_subscriber.py` | Maps events to `(msg_id, args)`, forwards to dispatcher. No-op without LP Notify device. |
 | `notification_dispatcher.py` | Discovers LP Notify device on any track, binds params by name, writes `msg_id/arg1-3/seq` on `send()`. |
-| `install.sh` | WSL→Windows install, `--mini` / `--pro` / `--all` (default). Assembles root + overlay flat per device; refuses on root∩overlay basename collision. Paths hard-coded for `mahed`'s machine. |
+| `install.sh` | WSL→Windows install, `--mini` / `--pro` / `--all` (default). Assembles root + overlay flat per device; refuses on root∩overlay basename collision. `--pro` also re-applies the factory shadow `__init__.py` (see [Pro package](#launchpad-pro-mk3-package)). Paths hard-coded for `mahed`'s machine. |
+| `factory-backup/` | Pristine `.pyc` backup of the factory `Launchpad_Pro_MK3` + `shadow__init__.py` (the auto-detection-killing shadow source). |
 
 ## Key subsystems
 
@@ -271,7 +272,9 @@ Components never call `show_message` directly — they emit semantic events on a
 
 **Mode panel** (`mode_picker.py`): **Shift+Session** opens a grid overlay with one zone per custom mode — melodic (top-left 4×4), chord pads (top-right 4×4), drum (bottom-left 4×4), drum_64 (x4-7, y4-5), drum_4_track (x4-7, y6-7); the zone of the mode the user came from renders bright. Tap a zone → that mode; Shift+Session again or plain Session → cancel. Why Shift+Session: the firmware owns every Shift+mode-button combo in native land (Shift+Note = scale settings, Shift+Projects = save…), and a stray Shift+Session in native land degrades gracefully — the firmware switches to the session layout, which the polling reclaim detects. The panel is a grid-takeover main mode but NOT in `_SEQUENCER_MODES` (no arrows/audition/scene slots; `_sequencer_for_mode` returns None for it).
 
-**Installs as `Launchpad_Pro_MK3_Custom` — the factory `Launchpad_Pro_MK3` script is NEVER touched** (unlike the Mini, which replaces its factory script). Both appear in Live's Control Surface dropdown; a pristine factory copy also lives in `.Live 12 Suite_updated/Resources/MIDI Remote Scripts/` if it ever needs restoring. install.sh must never target the factory folder name.
+**Installs as `Launchpad_Pro_MK3_Custom` — the factory `Launchpad_Pro_MK3` code is NEVER modified or deleted** (unlike the Mini, which replaces its factory script). Both appear in Live's Control Surface dropdown; pristine factory copies live in `factory-backup/Launchpad_Pro_MK3/` (repo) and `.Live 12 Suite_updated/Resources/MIDI Remote Scripts/`. install.sh must never delete/replace the factory folder.
+
+**Factory auto-detection is neutralized via a shadow `__init__.py`** (the ONE sanctioned, strictly additive write into the factory folder — `apply_factory_shadow` in install.sh, source: `factory-backup/shadow__init__.py`). Both scripts declare USB vendor 4661 / product 291, so Live auto-assigned BOTH on every launch (factory on MIDIIN3 = the DAW port, fighting our Programmer mode AND answering the DAW-port layout notifications the native passthrough depends on). The shadow sits next to the factory `__init__.pyc` (source beats bytecode), drops `get_capabilities()` (no auto-detect; manual selection still works) and logs `[Launchpad Pro MK3 FACTORY]` to Log.txt if the factory is scanned/instantiated anyway. Restore = delete that single `__init__.py`. One-time manual step after first install: a stale prefs slot may still reference the factory — set it to None once; it won't come back.
 
 **Button map** (session · sequencer):
 
