@@ -229,7 +229,7 @@ If you develop on WSL, you can use the included `install.sh` script. Edit the `S
 ./install.sh --pro     # Launchpad Pro MK3 only
 ```
 
-The script assembles the shared root files + the device overlay (`mini/` or `pro/`) flat into each device's MIDI Remote Scripts folder. For a manual install, reproduce that: copy all root `.py` files **plus** the overlay's `.py` files into one flat folder.
+The script assembles the shared root files + the device overlay (`mini/` or `pro/`) flat into each device's MIDI Remote Scripts folder — `Launchpad_Mini_MK3` (replaces the factory Mini script) and `Launchpad_Pro_MK3_Custom` (coexists with the factory Pro script). For a manual install, reproduce that: copy all root `.py` files **plus** the overlay's `.py` files into one flat folder.
 
 ---
 
@@ -244,7 +244,9 @@ The Pro port keeps the same modes and sequencers but uses the Pro's dedicated bu
 - **Note / Sequencer buttons** — switch directly to the melodic / drum sequencer (press again to return to Session).
 - **Track-select row + Record Arm/Mute/Solo/Stop Clip** — mixer modes below the grid, so the full 8×8 grid stays clips and all 8 scene buttons launch scenes. Shift+Record Arm = Undo, Shift+Mute = Redo, Shift+Stop Clip = Stop All Clips.
 
-Ports: bind the **third** port pair (`MIDIIN3/MIDIOUT3 (LPProMK3 MIDI)` on Windows) for Programmer-mode LEDs.
+**The Pro script installs as a separate control surface** (`Launchpad Pro MK3 Custom`) — the factory `Launchpad Pro MK3` script is left untouched and both coexist in Live's Control Surface list.
+
+Ports: bind the **first** port pair (`LPProMK3 MIDI` on Windows) — that's the Pro's MIDI interface where Programmer-mode LEDs live. Do **not** bind `MIDIIN3` (that's the DAW interface, used by the factory script).
 
 ---
 

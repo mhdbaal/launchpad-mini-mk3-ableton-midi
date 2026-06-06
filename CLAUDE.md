@@ -49,7 +49,7 @@ Shared `.py` files live at the **repo root**; device-specific modules live in `m
 
 | File | Responsibility |
 |------|---------------|
-| `mini/__init__.py` · `pro/__init__.py` | Capabilities, port declarations, `create_instance`. Mini: 2 port pairs. Pro: 3 pairs (bind the SCRIPT pair). |
+| `mini/__init__.py` · `pro/__init__.py` | Capabilities, port declarations, `create_instance`. Mini: 2 port pairs. Pro: 3 pairs — SCRIPT = **1st pair** (`LPProMK3 MIDI`, the Programmer-mode interface; MIDIIN3 is the DAW interface used by the factory script). |
 | `mini/launchpad_mini_mk3.py` | Top-level `NovationBase` (Mini). Owns modes, wiring, Programmer-mode SysEx, mode-button LEDs. |
 | `pro/launchpad_pro_mk3.py` | Top-level `NovationBase` (Pro). Native-UX wiring: dedicated buttons replace the Mini's hold/double-tap workarounds (see [Launchpad Pro MK3 package](#launchpad-pro-mk3-package)). |
 | `mini/elements.py` | Mini hardware layer. Adds `drums_mode_button`/`keys_mode_button`/`user_mode_button` + `Session_Button_Color_Element`. |
@@ -268,6 +268,8 @@ Components never call `show_message` directly — they emit semantic events on a
 
 `pro/` is a native-UX port of the Mini script: same Programmer-mode takeover, same shared components, but the Mini's button-scarcity workarounds are deleted from the wiring (no User hold-to-select, no double-tap edit entry, no shift lock, no stop-solo-mute tap-cycle, no `_seq_shift_button`). Active main modes mirror the Mini's ergonomic pass: `session` / `drum_sequence` / `melodic_sequence` (chord + drum variants constructed but unreachable).
 
+**Installs as `Launchpad_Pro_MK3_Custom` — the factory `Launchpad_Pro_MK3` script is NEVER touched** (unlike the Mini, which replaces its factory script). Both appear in Live's Control Surface dropdown; a pristine factory copy also lives in `.Live 12 Suite_updated/Resources/MIDI Remote Scripts/` if it ever needs restoring. install.sh must never target the factory folder name.
+
 **Button map** (session · sequencer):
 
 | Button (CC) | Session | Sequencer modes |
@@ -290,8 +292,8 @@ Inert in v1 (LED dark, swallowed by background): Chord (95), Custom (96), Projec
 **Pro-specific wiring patterns**: `EditModeComponent` runs **standalone** (`set_standalone(True)`, always enabled in session; `is_active()` = modifier held, so bare presses still launch). Dedicated buttons use direct value listeners + raw CC LEDs (`_update_modifier_leds` / `_update_mixer_function_leds`) — the same pattern as the Mini's transport, no Layer competition. The track-row mixer modes are a plain `ModesComponent` whose `selected_mode` is set by the function-button listeners (shift-combo checked first).
 
 **Hardware bytes still to validate on device** (suspect these first if something is dark):
-1. Programmer-mode entry `F0 00 20 29 02 0E 0E 01 F7` — if grid LEDs don't respond to Note On ch 0, this is wrong.
-2. Live preferences must bind the **3rd port pair** (`MIDIIN3/MIDIOUT3 (LPProMK3 MIDI)` on Windows). Wrong pair = clips work, LEDs dark.
+1. Live preferences must bind the **1st port pair** (`LPProMK3 MIDI` on Windows) — confirmed by the LP Pro MK3 Programmer's Reference: Programmer-mode LEDs only work through the MIDI interface (1st), NOT the DAW interface (MIDIIN3). Symptom of the wrong pair (observed 2026-06-06): device enters programmer mode and goes fully dark, pad presses leak into Live tracks as plain notes.
+2. Programmer-mode entry `F0 00 20 29 02 0E 0E 01 F7` — if grid LEDs don't respond to Note On ch 0 on the right port, this is wrong.
 3. LED writes on CC 101-108 / CC 1-8 (`B0 65 05` test).
 4. Feedback (cmd 10) / sleep (cmd 9) commands — assumed Novation-wide; harmless if ignored, remove from `_enter_programmer_mode` if they cause trouble.
 5. Setup button behavior (must not silently exit Programmer mode).
@@ -319,7 +321,7 @@ Stay quiet about restart instructions — the user knows.
 ### Paths
 
 - Source: `/home/mahed/projects/launchpad-mini-mk3-script/`
-- Install targets: `/mnt/c/ProgramData/Ableton/Live 12 Suite/Resources/MIDI Remote Scripts/Launchpad_Mini_MK3/` and `.../Launchpad_Pro_MK3/`
+- Install targets: `/mnt/c/ProgramData/Ableton/Live 12 Suite/Resources/MIDI Remote Scripts/Launchpad_Mini_MK3/` and `.../Launchpad_Pro_MK3_Custom/` (the factory `Launchpad_Pro_MK3` stays untouched)
 - Ableton log: `/mnt/c/Users/mahed/AppData/Roaming/Ableton/Live 12.3/Preferences/Log.txt`
 
 All hard-coded in `install.sh`. No fallback discovery — update if Live version changes.
@@ -334,8 +336,8 @@ Catches syntax errors. Cannot validate Ableton API (modules not importable here)
 
 ### MIDI port reminder
 
-For sequencer LEDs to render, each script must be bound to its device's DAW/script port pair:
-- **Mini**: `MIDIIN2 (LPMiniMK3 MIDI)` / `MIDIOUT2 (LPMiniMK3 MIDI)`.
-- **Pro**: the 3rd pair — typically `MIDIIN3 (LPProMK3 MIDI)` / `MIDIOUT3 (LPProMK3 MIDI)` on Windows.
+For Programmer-mode LEDs to render, each script must be bound to its device's **MIDI interface** (where programmer mode lives — NOT necessarily the DAW port):
+- **Mini** (control surface `Launchpad Mini MK3`): `MIDIIN2 (LPMiniMK3 MIDI)` / `MIDIOUT2 (LPMiniMK3 MIDI)` — 2nd pair.
+- **Pro** (control surface `Launchpad Pro MK3 Custom`): `LPProMK3 MIDI` — **1st pair**. MIDIIN3 is the DAW interface (factory script's port); binding it = device dark + pad notes leaking into tracks.
 
-Wrong port: launch grid works but Programmer-mode LEDs stay dark. Clip launching works but sequencer pads dark → suspect port mapping.
+Wrong port: launch grid may work but Programmer-mode LEDs stay dark → suspect port mapping first.

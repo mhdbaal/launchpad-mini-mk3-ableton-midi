@@ -99,8 +99,12 @@ install_device() {
     echo -e "${GREEN}✓ $(ls -1 "$dest_dir"/*.py | wc -l) fichiers installés ($(basename "$dest_dir"))${NC}"
 }
 
+# NOTE: le Mini REMPLACE le script factory (choix historique). Le Pro
+# s'installe sous un nom DISTINCT — Launchpad_Pro_MK3_Custom — pour ne
+# JAMAIS toucher le script factory Launchpad_Pro_MK3 (les deux coexistent
+# dans le dropdown Control Surface de Live).
 [ "$INSTALL_MINI" = true ] && install_device mini Launchpad_Mini_MK3
-[ "$INSTALL_PRO" = true ] && install_device pro Launchpad_Pro_MK3
+[ "$INSTALL_PRO" = true ] && install_device pro Launchpad_Pro_MK3_Custom
 
 # Supprimer le log Ableton (une seule fois, partagé par toute l'instance Live)
 if [ -f "$LOG_FILE" ]; then
@@ -119,5 +123,5 @@ echo "2. Relancez Ableton Live"
 echo "3. Allez dans Préférences → Link/Tempo/MIDI"
 echo "4. Control Surface :"
 [ "$INSTALL_MINI" = true ] && echo "   • Launchpad Mini MK3 → Input/Output: MIDIIN2/MIDIOUT2 (LPMiniMK3 MIDI)"
-[ "$INSTALL_PRO" = true ]  && echo "   • Launchpad Pro MK3  → Input/Output: 3e paire de ports (LPProMK3 MIDI / MIDIIN3)"
+[ "$INSTALL_PRO" = true ]  && echo "   • Launchpad Pro MK3 Custom → Input/Output: 1re paire 'LPProMK3 MIDI' (PAS MIDIIN3 — le Programmer mode vit sur la 1re interface)"
 echo ""
