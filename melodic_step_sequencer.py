@@ -170,6 +170,19 @@ class MelodicStepSequencerComponent(Component):
         self._pitch_offset = 0
         self._control_buttons = ()
         self._control_button_listeners = []
+        # Scene-button slot assignments. Defaults are the Mini MK3 layout
+        # (module constants); device wiring can remap or disable (None)
+        # individual slots via configure_slots(). Chromatic/Capture share a
+        # physical slot, as do ScaleCycle/Quantize (dual-purpose by shift).
+        self._chromatic_slot = CHROMATIC_SLOT
+        self._scale_cycle_slot = SCALE_CYCLE_SLOT
+        self._cycle_slot = CYCLE_SLOT
+        self._shift_slot = SHIFT_SLOT
+        # When True (Pro MK3), the dual-purpose slots act directly:
+        # chromatic toggle and scale cycle no longer need shift held,
+        # because Capture/Quantize live on dedicated buttons instead of
+        # sharing these slots.
+        self._direct_slot_actions = False
         self._grid_option_index = DEFAULT_GRID_INDEX
         # Bottom-right 4x4 mode: "pitch" (default — those cells are pitch
         # rows) or "grid" (resolution selector). Cycled via the slot 6 cycle
@@ -871,22 +884,22 @@ class MelodicStepSequencerComponent(Component):
             return
         if self._is_main_mode_selector_held():
             return
-        if index == CHROMATIC_SLOT:
-            # Slot 0 dual-purpose: chromatic toggle when shift held,
-            # Capture MIDI when shift not held.
-            if self._device_shift_held:
+        if index == self._chromatic_slot:
+            # Dual-purpose slot: chromatic toggle when shift held (or when
+            # the device exposes direct slots), Capture MIDI otherwise.
+            if self._direct_slot_actions or self._device_shift_held:
                 self._toggle_chromatic_mode()
             else:
                 self._capture_midi()
-        elif index == SCALE_CYCLE_SLOT:
-            # Slot 1 dual-purpose: scale cycle / Quantize.
-            if self._device_shift_held:
+        elif index == self._scale_cycle_slot:
+            # Dual-purpose slot: scale cycle / Quantize.
+            if self._direct_slot_actions or self._device_shift_held:
                 self._cycle_scale(1)
             else:
                 self._quantize_selected()
-        elif index == CYCLE_SLOT:
+        elif index == self._cycle_slot:
             self._toggle_bottom_right_mode()
-        # Slots 2-5 are free; slot 7 is the device shift (untouched).
+        # Unassigned slots are free; slot 7 is the device shift (untouched).
 
     def adjust_pitch_offset(self, delta):
         """Public: shift the pitch row range by `delta` semitones.
@@ -912,6 +925,49 @@ class MelodicStepSequencerComponent(Component):
         self._emit(Event.MELODIC_PAGE_SCOPED,
                    start=target + 1, end=target + 1)
         self.update()
+
+    # ---- public API for device-specific wiring -------------------------
+    # The Mini reaches these actions through scene-button slots; the Pro
+    # MK3 wiring calls them directly from dedicated hardware buttons.
+
+    def configure_slots(self, **overrides):
+        """Remap or disable scene-button slot assignments.
+
+        Keys: chromatic, scale_cycle, cycle, shift. Values: slot index 0-7,
+        or None to disable the slot. Defaults are the Mini MK3 layout
+        (module constants).
+        """
+        for key, value in overrides.items():
+            attr = "_{}_slot".format(key)
+            if not hasattr(self, attr):
+                raise ValueError("unknown slot key: {}".format(key))
+            setattr(self, attr, value)
+        if self.is_enabled():
+            self._update_control_leds()
+
+    def set_direct_slot_actions(self, direct):
+        """When True (Pro MK3), the dual-purpose slots act directly —
+        chromatic toggle / scale cycle without holding shift — because
+        Capture/Quantize live on dedicated buttons."""
+        self._direct_slot_actions = bool(direct)
+        if self.is_enabled():
+            self._update_control_leds()
+
+    def capture_midi(self):
+        """Public: trigger Capture MIDI (same path as the capture slot)."""
+        if self.is_enabled():
+            self._capture_midi()
+
+    def quantize_selected(self):
+        """Public: quantize the current selection (held cells, else all
+        notes in the clip)."""
+        if self.is_enabled():
+            self._quantize_selected()
+
+    def toggle_bottom_right_mode(self):
+        """Public: cycle the bottom-right 4x4 (pitch ↔ grid resolution)."""
+        if self.is_enabled():
+            self._toggle_bottom_right_mode()
 
     def _set_grid_option(self, index):
         """Pick a grid resolution from `GRID_OPTIONS` (0..15)."""
@@ -988,9 +1044,10 @@ class MelodicStepSequencerComponent(Component):
         self._emit(Event.MELODIC_CHROMATIC_MODE, on=self._chromatic_mode)
 
     def _chromatic_color(self):
-        # Slot 5 is dual-purpose. Shift held → chromatic toggle. Shift not
-        # held → Capture MIDI (bright when capturable, dim otherwise).
-        if self._device_shift_held:
+        # Dual-purpose slot. Shift held (or direct slots) → chromatic
+        # toggle. Otherwise → Capture MIDI (bright when capturable, dim
+        # otherwise).
+        if self._direct_slot_actions or self._device_shift_held:
             return ("MelodicSequencer.Control.GridSelected"
                     if self._chromatic_mode
                     else "MelodicSequencer.Control.Grid")
@@ -999,10 +1056,10 @@ class MelodicStepSequencerComponent(Component):
         return "MelodicSequencer.Control.CaptureMidi"
 
     def _scale_or_quantize_color(self):
-        """Slot 6 is dual-purpose: scale cycle (shift held) / Quantize (shift
-        not held). Encapsulates both LED states in one helper to keep
-        `_update_control_leds` compact."""
-        if self._device_shift_held:
+        """Dual-purpose slot: scale cycle (shift held, or direct slots) /
+        Quantize otherwise. Encapsulates both LED states in one helper to
+        keep `_update_control_leds` compact."""
+        if self._direct_slot_actions or self._device_shift_held:
             return "MelodicSequencer.Control.ScaleCycle"
         return "MelodicSequencer.Control.Quantize"
 
@@ -1270,23 +1327,26 @@ class MelodicStepSequencerComponent(Component):
             return
         if self._is_main_mode_selector_held():
             return
-        # Slot 0 = Capture / Chromatic (dual via shift). Slot 1 = Quantize /
-        # Scale cycle. Slots 2-4 = free (grid resolutions moved to the
-        # bottom-right 4x4 in "grid" mode). Slot 5 = sequencer shift
-        # (relocated from slot 7). Slot 6 = cycle (pitch ↔ grid). Slot 7
-        # = RESERVED (was device shift; now session-only).
+        # Default (Mini MK3) slot layout: 0 = Capture / Chromatic (dual via
+        # shift), 1 = Quantize / Scale cycle, 2-4 = free (grid resolutions
+        # moved to the bottom-right 4x4 in "grid" mode), 5 = sequencer
+        # shift (relocated from slot 7), 6 = cycle (pitch ↔ grid), 7 =
+        # RESERVED (was device shift; now session-only). Actual positions
+        # come from the configure_slots() assignments; unassigned (or
+        # None, i.e. disabled) slots stay dark.
         shift_color = ("MelodicSequencer.Control.Shift"
                        if self._device_shift_held
                        else "DefaultButton.Disabled")
-        colors = (
-          self._chromatic_color(),             # slot 0
-          self._scale_or_quantize_color(),     # slot 1
-          "DefaultButton.Disabled",            # slot 2
-          "DefaultButton.Disabled",            # slot 3
-          "DefaultButton.Disabled",            # slot 4
-          shift_color,                         # slot 5 = seq shift
-          self._cycle_color(),                 # slot 6
-          "DefaultButton.Disabled")            # slot 7 reserved
+        colors = ["DefaultButton.Disabled"] * len(self._control_buttons)
+
+        def assign(slot, color):
+            if slot is not None and 0 <= slot < len(colors):
+                colors[slot] = color
+
+        assign(self._chromatic_slot, self._chromatic_color())
+        assign(self._scale_cycle_slot, self._scale_or_quantize_color())
+        assign(self._shift_slot, shift_color)
+        assign(self._cycle_slot, self._cycle_color())
         for index, button in enumerate(self._control_buttons):
             try:
                 button.set_light(colors[index] if self.is_enabled() else "DefaultButton.Disabled")

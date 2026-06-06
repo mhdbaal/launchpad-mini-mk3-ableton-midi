@@ -96,6 +96,13 @@ class EditModeComponent(Component):
         # from redo (tap while shift held). Set by Launchpad_Mini_MK3 via
         # set_shift_button after _create_stop_solo_mute_modes.
         self._shift_button = None
+        # Standalone mode (Pro MK3): there is no `edit` sub-mode — the
+        # component stays enabled all through session mode and the
+        # modifiers are driven by dedicated buttons (Clear/Duplicate) via
+        # set_delete_held/set_duplicate_held. is_active() then only claims
+        # clip/scene presses while a modifier is actually held, so bare
+        # presses keep their normal launch behavior.
+        self._standalone = False
 
     # ---- enable / disable lifecycle -----------------------------------
 
@@ -181,7 +188,36 @@ class EditModeComponent(Component):
 
     # ---- public state -------------------------------------------------
 
+    def set_standalone(self, standalone):
+        """Public: enable standalone (dedicated-button) operation — see
+        the `_standalone` comment in __init__. Pro MK3 wiring calls this
+        once at setup."""
+        self._standalone = bool(standalone)
+
+    def set_delete_held(self, held):
+        """Public: drive the Delete modifier from a dedicated hardware
+        button (Pro MK3: Clear held)."""
+        held = bool(held)
+        if held == self._delete_held:
+            return
+        self._delete_held = held
+        self.update()
+
+    def set_duplicate_held(self, held):
+        """Public: drive the Duplicate modifier from a dedicated hardware
+        button (Pro MK3: Duplicate held). Releasing cancels an in-flight
+        duplicate capture, mirroring the matrix-modifier behavior."""
+        held = bool(held)
+        if held == self._duplicate_held:
+            return
+        self._duplicate_held = held
+        if not held and self._duplicate_source is not None:
+            self._set_duplicate_source(None)
+        self.update()
+
     def is_active(self):
+        if self._standalone:
+            return self.is_enabled() and self.current_modifier() is not None
         return self.is_enabled()
 
     def current_modifier(self):
@@ -456,21 +492,36 @@ class EditModeComponent(Component):
         shift_held = (self._shift_button is not None
                       and self._shift_button.is_pressed())
         if shift_held:
-            try:
-                if self._song.can_redo:
-                    self._song.redo()
-            except Exception as exc:
-                self._log("redo failed: {}".format(exc))
-                return
-            self._emit(Event.EDIT_REDO)
+            self.redo()
         else:
-            try:
-                if self._song.can_undo:
-                    self._song.undo()
-            except Exception as exc:
-                self._log("undo failed: {}".format(exc))
-                return
-            self._emit(Event.EDIT_UNDO)
+            self.undo()
+
+    def undo(self):
+        """Public: song undo (gated on can_undo), with the edit-mode
+        notification. Pro MK3 wiring binds this to Shift+Record Arm."""
+        try:
+            if self._song.can_undo:
+                self._song.undo()
+        except Exception as exc:
+            self._log("undo failed: {}".format(exc))
+            return
+        self._emit(Event.EDIT_UNDO)
+
+    def redo(self):
+        """Public: song redo (gated on can_redo), with the edit-mode
+        notification. Pro MK3 wiring binds this to Shift+Mute."""
+        try:
+            if self._song.can_redo:
+                self._song.redo()
+        except Exception as exc:
+            self._log("redo failed: {}".format(exc))
+            return
+        self._emit(Event.EDIT_REDO)
+
+    def stop_all_clips(self):
+        """Public: stop all clips with the edit-mode notification. Pro MK3
+        wiring binds this to Shift+Stop Clip."""
+        self._stop_all_clips()
 
     # ---- helpers ------------------------------------------------------
 

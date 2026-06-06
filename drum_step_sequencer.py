@@ -166,6 +166,17 @@ class DrumStepSequencerComponent(Component):
         self._bottom_right_mode = BOTTOM_RIGHT_MODE_LOOP
         self._control_buttons = ()
         self._control_button_listeners = []
+        # Scene-button slot assignments. Defaults are the Mini MK3 layout
+        # (module constants); device wiring can remap or disable (None)
+        # individual slots via configure_slots() — e.g. the Pro MK3 moves
+        # capture/quantize/shift/special-shift onto dedicated buttons.
+        self._capture_slot = CAPTURE_SLOT
+        self._quantize_slot = QUANTIZE_SLOT
+        self._duplicate_page_slot = DUPLICATE_PAGE_SLOT
+        self._double_loop_slot = DOUBLE_LOOP_SLOT
+        self._cycle_slot = CYCLE_SLOT
+        self._shift_slot = SHIFT_SLOT
+        self._special_shift_slot = SPECIAL_SHIFT_SLOT
         # Track pin: when not None, sequencer ignores Live's selected_track and
         # operates on this track instead. Set via toggle_pin(). Cleared when the
         # pinned track is removed from the song (see _on_tracks_changed).
@@ -187,6 +198,10 @@ class DrumStepSequencerComponent(Component):
         self._special_shift_held = False
         self._special_shift_press_time = None
         self._special_shift_action_performed = False
+        # True while the modifier is driven by a dedicated hardware button
+        # (Pro MK3 Clear/Duplicate via set_action_modifier) — release must
+        # never tap-cycle the mode in that case: the button IS the mode.
+        self._special_shift_external = False
         # For duplicate mode only: captured source on 1st tap. None means
         # "no source yet, next tap captures". Tuples discriminate the
         # target kind so a cross-type 2nd tap (pad → row) resets rather
@@ -1302,9 +1317,13 @@ class DrumStepSequencerComponent(Component):
         # Quick tap without doing anything = cycle the mode. Long press
         # without doing anything = just exit ("I was hesitating"). Action
         # during hold = exit without cycling regardless of duration.
-        if (not self._special_shift_action_performed
+        # External modifiers (dedicated Clear/Duplicate buttons) never
+        # cycle — the button itself selects the mode.
+        if (not self._special_shift_external
+                and not self._special_shift_action_performed
                 and held_for <= SPECIAL_SHIFT_TAP_THRESHOLD):
             self._cycle_special_shift_mode()
+        self._special_shift_external = False
         self._special_shift_action_performed = False
         self._duplicate_source = None
         self.update()
@@ -1845,15 +1864,15 @@ class DrumStepSequencerComponent(Component):
     def _on_control_button_value(self, index, value):
         if not self.is_enabled():
             return
-        # Slot 5 = sequencer shift modifier, parent-owned. Parent's
+        # Sequencer shift modifier slot, parent-owned. Parent's
         # `__on_sequencer_shift_button_value` tracks press/release and
         # drives our `_device_shift_held` via set_device_shift_held(),
         # so the sequencer-side listener does nothing for this slot.
-        if index == SHIFT_SLOT:
+        if index == self._shift_slot:
             return
-        # Special Shift (slot 6) — tap-vs-hold modifier. Tracked on both
-        # press and release.
-        if index == SPECIAL_SHIFT_SLOT:
+        # Special Shift — tap-vs-hold modifier. Tracked on both press and
+        # release.
+        if index == self._special_shift_slot:
             if self._is_main_mode_selector_held():
                 return
             if value:
@@ -1861,8 +1880,9 @@ class DrumStepSequencerComponent(Component):
             else:
                 self._exit_special_shift()
             return
-        # While special shift is held, slots 0-3 become row selectors and
-        # 4-5 are inert. Other slots' normal actions are suppressed.
+        # While special shift is held, slots 0-3 become row selectors
+        # (positional — they align with the 4 step rows) and the other
+        # slots' normal actions are suppressed.
         if self._special_shift_held:
             if not value:
                 return
@@ -1870,10 +1890,10 @@ class DrumStepSequencerComponent(Component):
                 return
             if 0 <= index <= 3:
                 self._special_shift_row_action(row_idx=index)
-            # slot 4-5 ignored. Slot 7 stays as regular shift (untouched).
+            # Other slots ignored. Slot 7 stays as regular shift (untouched).
             return
         # Duplicate Page is a modifier — needs press AND release tracking.
-        if index == DUPLICATE_PAGE_SLOT:
+        if index == self._duplicate_page_slot:
             if self._is_main_mode_selector_held():
                 return
             self._duplicate_page_held = bool(value)
@@ -1884,15 +1904,16 @@ class DrumStepSequencerComponent(Component):
         if self._is_main_mode_selector_held():
             # Scene press belongs to the parent's mode selector — swallow.
             return
-        if index == CAPTURE_SLOT:
+        if index == self._capture_slot:
             self._capture_midi()
-        elif index == QUANTIZE_SLOT:
+        elif index == self._quantize_slot:
             self._quantize_selected()
-        elif index == DOUBLE_LOOP_SLOT:
+        elif index == self._double_loop_slot:
             self._double_loop()
-        elif index == CYCLE_SLOT:
+        elif index == self._cycle_slot:
             self._toggle_bottom_right_mode()
-        # Slots 2-5 are free, slot 7 is the device shift (driven elsewhere).
+        # Unassigned slots are free; slot 7 is the device shift (driven
+        # elsewhere).
 
     def adjust_pitch_offset(self, delta):
         """Public: shift the drum-pad selector pitch range by `delta` semitones.
@@ -1902,6 +1923,67 @@ class DrumStepSequencerComponent(Component):
         """
         if self.is_enabled():
             self._adjust_pitch_offset(delta)
+
+    # ---- public API for device-specific wiring -------------------------
+    # The Mini reaches these actions through scene-button slots; the Pro
+    # MK3 wiring calls them directly from dedicated hardware buttons.
+
+    def configure_slots(self, **overrides):
+        """Remap or disable scene-button slot assignments.
+
+        Keys: capture, quantize, duplicate_page, double_loop, cycle, shift,
+        special_shift. Values: slot index 0-7, or None to disable the slot.
+        Defaults are the Mini MK3 layout (module constants). The Pro MK3
+        wiring disables the slots whose functions live on dedicated buttons.
+        """
+        for key, value in overrides.items():
+            attr = "_{}_slot".format(key)
+            if not hasattr(self, attr):
+                raise ValueError("unknown slot key: {}".format(key))
+            setattr(self, attr, value)
+        if self.is_enabled():
+            self._update_control_leds()
+
+    def capture_midi(self):
+        """Public: trigger Capture MIDI (same path as the capture slot)."""
+        if self.is_enabled():
+            self._capture_midi()
+
+    def quantize_selected(self):
+        """Public: quantize the current selection (held steps, else the
+        selected drum pad's notes)."""
+        if self.is_enabled():
+            self._quantize_selected()
+
+    def double_loop(self):
+        """Public: double the loop length and duplicate its content."""
+        if self.is_enabled():
+            self._double_loop()
+
+    def toggle_bottom_right_mode(self):
+        """Public: cycle the bottom-right 4x4 (loop ↔ grid resolution)."""
+        if self.is_enabled():
+            self._toggle_bottom_right_mode()
+
+    def set_action_modifier(self, mode, held):
+        """Public: drive the delete/duplicate action modifier from dedicated
+        hardware buttons (Pro MK3: Clear / Duplicate held).
+
+        Reuses the special-shift machinery, but the release never tap-cycles
+        the mode — the button itself selects it. Pressing the other button
+        while one is already held just switches the live mode.
+        """
+        if mode not in ("delete", "duplicate") or not self.is_enabled():
+            return
+        if held:
+            self._special_shift_mode = mode
+            if self._special_shift_held:
+                self.update()
+            else:
+                self._enter_special_shift()
+                self._special_shift_external = True
+        elif self._special_shift_held and self._special_shift_mode == mode:
+            self._exit_special_shift()
 
     def _set_grid_option(self, index):
         """Select a grid resolution from `GRID_OPTIONS` (0..15). No-op when
@@ -2065,17 +2147,26 @@ class DrumStepSequencerComponent(Component):
             # Parent's User-held mode selector owns the scene column right
             # now — don't paint over its LEDs.
             return
-        # Slot 0 = Capture MIDI. Slot 1 = Quantize Selected.
-        # Slot 2 = Duplicate Page (modifier). Slot 3 = Double Loop (action).
-        # Slot 4 = cycle button (loop ↔ grid). Slot 5 = sequencer shift
-        # (bright when held/locked). Slot 6 = Special Shift (cycle
-        # delete/duplicate; hold = action mode). Slot 7 = RESERVED (was
-        # device shift, now session-only — kept off in sequencer mode).
+        # Default (Mini MK3) slot layout: 0 = Capture MIDI, 1 = Quantize
+        # Selected, 2 = Duplicate Page (modifier), 3 = Double Loop (action),
+        # 4 = cycle button (loop ↔ grid), 5 = sequencer shift (bright when
+        # held/locked), 6 = Special Shift (cycle delete/duplicate; hold =
+        # action mode), 7 = RESERVED (was device shift, now session-only).
+        # Actual positions come from the configure_slots() assignments.
         shift_color = ("DrumSequencer.Control.Shift"
                        if self._device_shift_held
                        else "DrumSequencer.Control.ShiftIdle")
-        # While special shift is held, slots 0-3 become row selectors and
-        # 4-5 are blacked out. Slot 6 shows the live mode (bright).
+        # Colors are assembled per configured slot; unassigned (or None,
+        # i.e. disabled) slots stay dark.
+        colors = ["DefaultButton.Disabled"] * len(self._control_buttons)
+
+        def assign(slot, color):
+            if slot is not None and 0 <= slot < len(colors):
+                colors[slot] = color
+
+        # While special shift is held, slots 0-3 become row selectors
+        # (positional — aligned with the 4 step rows) and everything else
+        # is blacked out except the shift + special-shift slots.
         if self._special_shift_held:
             mode = self._special_shift_mode
             row_idle = ("DrumSequencer.Control.SpecialDeleteHalf"
@@ -2084,7 +2175,6 @@ class DrumStepSequencerComponent(Component):
             row_armed = ("DrumSequencer.Control.SpecialDelete"
                          if mode == "delete"
                          else "DrumSequencer.Control.SpecialDuplicate")
-            special_color = row_armed
             # Row selectors highlight the captured source if any. For
             # duplicate, source-row's slot lights up brighter so the user
             # knows what was captured.
@@ -2095,15 +2185,10 @@ class DrumStepSequencerComponent(Component):
                         and src[2] == self._page_index):
                     return row_armed
                 return row_idle
-            colors = (
-              _row_color(0),                          # slot 0 = row 0
-              _row_color(1),                          # slot 1 = row 1
-              _row_color(2),                          # slot 2 = row 2
-              _row_color(3),                          # slot 3 = row 3
-              "DefaultButton.Disabled",               # slot 4
-              shift_color,                            # slot 5 = seq shift
-              special_color,                          # slot 6 (held)
-              "DefaultButton.Disabled")               # slot 7 reserved
+            for row_idx in range(4):
+                assign(row_idx, _row_color(row_idx))
+            assign(self._shift_slot, shift_color)
+            assign(self._special_shift_slot, row_armed)
         else:
             capture_color = ("DrumSequencer.Control.CaptureMidiReady"
                              if getattr(self.song, "can_capture_midi", False)
@@ -2114,20 +2199,19 @@ class DrumStepSequencerComponent(Component):
             duplicate_color = ("DrumSequencer.Control.DuplicatePageHeld"
                                if self._duplicate_page_held
                                else "DrumSequencer.Control.DuplicatePage")
-            # Idle slot 6 shows the current cycle mode (half-bright) so
-            # the user knows which action a hold will execute.
+            # Idle special-shift slot shows the current cycle mode
+            # (half-bright) so the user knows which action a hold will
+            # execute.
             special_idle = ("DrumSequencer.Control.SpecialDeleteHalf"
                             if self._special_shift_mode == "delete"
                             else "DrumSequencer.Control.SpecialDuplicateHalf")
-            colors = (
-              capture_color,                          # slot 0
-              "DrumSequencer.Control.Quantize",       # slot 1
-              duplicate_color,                        # slot 2
-              "DrumSequencer.Control.DoubleLoop",     # slot 3
-              cycle_color,                            # slot 4
-              shift_color,                            # slot 5 = seq shift
-              special_idle,                           # slot 6
-              "DefaultButton.Disabled")               # slot 7 reserved
+            assign(self._capture_slot, capture_color)
+            assign(self._quantize_slot, "DrumSequencer.Control.Quantize")
+            assign(self._duplicate_page_slot, duplicate_color)
+            assign(self._double_loop_slot, "DrumSequencer.Control.DoubleLoop")
+            assign(self._cycle_slot, cycle_color)
+            assign(self._shift_slot, shift_color)
+            assign(self._special_shift_slot, special_idle)
         for index, button in enumerate(self._control_buttons):
             try:
                 button.set_light(colors[index] if self.is_enabled() else "DefaultButton.Disabled")
