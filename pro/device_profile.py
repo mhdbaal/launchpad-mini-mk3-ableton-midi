@@ -82,9 +82,8 @@ TRACK_SELECT_FIRST_CC = 101  # 101-108, left → right
 
 # Buttons deliberately inert in v1 — swallowed by the background layer,
 # LEDs kept dark. Reserved for future features (faders need the DAW-mode
-# fader layout; Custom/Projects/Fixed Length unassigned).
+# fader layout; Projects/Fixed Length unassigned).
 INERT_BUTTON_CCS = (
-    CUSTOM_BUTTON_CC,
     PROJECTS_BUTTON_CC,
     FIXED_LENGTH_BUTTON_CC,
     VOLUME_BUTTON_CC,

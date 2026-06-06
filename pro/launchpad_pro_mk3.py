@@ -22,7 +22,7 @@
 #     Stop All Clips.
 from __future__ import absolute_import, print_function, unicode_literals
 import time
-from ableton.v2.base import listens
+from ableton.v2.base import listens, task
 from ableton.v2.control_surface import Layer
 from ableton.v2.control_surface.components import SessionOverviewComponent
 from ableton.v2.control_surface.mode import AddLayerMode, ModesComponent
@@ -32,9 +32,11 @@ from novation.session_modes import SessionModesComponent
 from .channel_strip_with_arm_toggle import ChannelStripComponentWithArmToggle
 from .clip_copy_component import ClipCopyComponent
 from .chord_pad_mode import ChordPadComponent
+from . import sysex_ids as ids
 from .device_profile import (
     CHORD_BUTTON_CC,
     CLEAR_BUTTON_CC,
+    CUSTOM_BUTTON_CC,
     DEVICE_FAMILY_CODE,
     DEVICE_SYSEX_ID,
     DOWN_BUTTON_CC,
@@ -123,6 +125,17 @@ _SEQUENCER_MODES = ("drum_sequence", "drum_64_sequence",
                     "chord_mode")
 _DRUM_MODES = ("drum_sequence", "drum_64_sequence", "drum_4_track_sequence")
 VARIANT_PICKER_MODE = "variant_picker"
+# Native passthrough: the script steps aside (Programmer mode off, DAW
+# mode on) so the device's own Note/Chord/Custom/Sequencer engines run —
+# REAL multi-note chords and the hardware step sequencer, with the played
+# notes flowing into Live through port 1 (which doubles as track input).
+# All our components are disabled, so the grid elements are released and
+# nothing intercepts the notes. Return path: the user presses Session ON
+# THE DEVICE — we detect the session-layout switch via the layout enquiry
+# poll below (the device's notifications go to the DAW port we're not
+# bound to, so we ask instead). Manual fallback: the device's Setup page.
+NATIVE_PASSTHROUGH_MODE = "native_passthrough"
+PASSTHROUGH_POLL_INTERVAL = 0.8
 
 
 class Launchpad_Pro_MK3(NovationBase):
@@ -141,6 +154,12 @@ class Launchpad_Pro_MK3(NovationBase):
         # return to when the picker is cancelled.
         self._last_drum_variant = "drum_sequence"
         self._picker_return_mode = None
+        # Native passthrough state. `_passthrough_armed` flips once we've
+        # seen a non-session layout — only then does a session-layout
+        # reading mean "the user pressed Session on the device, reclaim".
+        self._native_passthrough_active = False
+        self._passthrough_armed = False
+        self._passthrough_poll_task = None
         # Notification plumbing — created early so components can take the
         # bus reference at construction time. _event_bus = None would make
         # every _emit() a no-op (kill switch).
@@ -205,7 +224,17 @@ class Launchpad_Pro_MK3(NovationBase):
         self._Launchpad_Pro_MK3__on_quantize_button_value.subject = self._elements.quantize_button
         self._Launchpad_Pro_MK3__on_note_mode_button_value.subject = self._elements.note_mode_button
         self._Launchpad_Pro_MK3__on_chord_mode_button_value.subject = self._elements.chord_mode_button
+        self._Launchpad_Pro_MK3__on_custom_mode_button_value.subject = self._elements.custom_mode_button
         self._Launchpad_Pro_MK3__on_sequencer_mode_button_value.subject = self._elements.sequencer_mode_button
+        # Layout read-back — only used by the native passthrough (the
+        # device's spontaneous layout notifications go to the DAW port;
+        # this listener catches the responses to our enquiry poll).
+        self._Launchpad_Pro_MK3__on_layout_switch_value.subject = self._elements.layout_switch
+        # Poll task lives on the background component (always enabled).
+        self._passthrough_poll_task = self._background._tasks.add(
+            task.sequence(task.wait(PASSTHROUGH_POLL_INTERVAL),
+                          task.run(self._poll_native_layout)))
+        self._passthrough_poll_task.kill()
         self._Launchpad_Pro_MK3__on_record_arm_button_value.subject = self._elements.record_arm_button
         self._Launchpad_Pro_MK3__on_mute_button_value.subject = self._elements.mute_button
         self._Launchpad_Pro_MK3__on_solo_button_value.subject = self._elements.solo_button
@@ -400,6 +429,7 @@ class Launchpad_Pro_MK3(NovationBase):
         self._main_modes.add_mode("melodic_sequence", None)
         self._main_modes.add_mode("chord_mode", None)
         self._main_modes.add_mode(VARIANT_PICKER_MODE, None)
+        self._main_modes.add_mode(NATIVE_PASSTHROUGH_MODE, None)
         self._main_modes.selected_mode = "session"
         self._Launchpad_Pro_MK3__on_main_mode_changed.subject = self._main_modes
         self._main_modes.set_enabled(True)
@@ -456,7 +486,8 @@ class Launchpad_Pro_MK3(NovationBase):
 
     @listens("selected_mode")
     def __on_main_mode_changed(self, mode):
-        grid_takeover = mode in _SEQUENCER_MODES or mode == VARIANT_PICKER_MODE
+        grid_takeover = mode in _SEQUENCER_MODES or mode in (
+            VARIANT_PICKER_MODE, NATIVE_PASSTHROUGH_MODE)
         self._log("main mode changed: {}".format(mode))
         if mode in _DRUM_MODES:
             # A plain Sequencer press re-opens the variant last used.
@@ -472,7 +503,12 @@ class Launchpad_Pro_MK3(NovationBase):
         if grid_takeover:
             self._set_session_components_enabled(False)
             self._restore_clip_launch_matrix()
-            if mode == VARIANT_PICKER_MODE:
+            if mode == NATIVE_PASSTHROUGH_MODE:
+                # Everything stays disabled — the grid elements are
+                # released so the device's native-mode notes flow through
+                # port 1 straight into the armed track.
+                active = None
+            elif mode == VARIANT_PICKER_MODE:
                 self._variant_picker.set_current_variant(self._last_drum_variant)
                 self._variant_picker.set_enabled(True)
                 active = None
@@ -528,8 +564,25 @@ class Launchpad_Pro_MK3(NovationBase):
 
     @listens("value")
     def __on_chord_mode_button_value(self, value):
+        """Chord (95). Plain press: our chord-pad mode (single root note
+        per pad — pair with Live's Chord MIDI effect or the future M4L
+        companion for full chords). Shift+press: NATIVE chord passthrough —
+        the firmware's chord engine plays real multi-note chords."""
+        if not value:
+            return
+        if self._is_shift_pressed():
+            self._enter_native_passthrough(ids.CHORD_LAYOUT_BYTES)
+            return
+        self._toggle_main_mode("chord_mode")
+
+    @listens("value")
+    def __on_custom_mode_button_value(self, value):
+        """Custom (96): generic native passthrough. The device's own
+        Note/Chord/Custom/Sequencer buttons all work natively — this is
+        the doorway to the hardware step sequencer. Opens on the native
+        Note layout; press Session ON THE DEVICE to come back."""
         if value:
-            self._toggle_main_mode("chord_mode")
+            self._enter_native_passthrough(ids.NOTE_LAYOUT_BYTES)
 
     @listens("value")
     def __on_sequencer_mode_button_value(self, value):
@@ -555,6 +608,67 @@ class Launchpad_Pro_MK3(NovationBase):
         """Callback from the picker panel — commit the chosen variant."""
         self._picker_return_mode = None
         self._main_modes.selected_mode = mode
+
+    # ---- native passthrough (hardware chord engine / step sequencer) ----
+
+    def _enter_native_passthrough(self, layout_bytes):
+        """Step aside and hand the device to its own firmware. The mode
+        change first releases every grid element (components disabled), so
+        the native engines' notes pass through port 1 into Live tracks;
+        then Programmer mode is dropped and the requested native layout is
+        selected. The enquiry poll watches for the user pressing Session
+        on the device to reclaim."""
+        if self._native_passthrough_active:
+            return
+        self._log("native passthrough: enter (layout={})".format(layout_bytes))
+        self._native_passthrough_active = True
+        self._passthrough_armed = False
+        self._main_modes.selected_mode = NATIVE_PASSTHROUGH_MODE
+        self._send_launchpad_sysex(PROGRAMMER_MODE_COMMAND_BYTE, PROGRAMMER_MODE_OFF)
+        self._elements.firmware_mode_switch.send_value(sysex.DAW_MODE_BYTE)
+        self._elements.layout_switch.send_value(layout_bytes)
+        if self._passthrough_poll_task is not None:
+            self._passthrough_poll_task.restart()
+
+    def _exit_native_passthrough(self):
+        if not self._native_passthrough_active:
+            return
+        self._log("native passthrough: exit")
+        self._native_passthrough_active = False
+        self._passthrough_armed = False
+        if self._passthrough_poll_task is not None:
+            self._passthrough_poll_task.kill()
+        self._enter_programmer_mode()
+        self._main_modes.selected_mode = "session"
+
+    def _poll_native_layout(self):
+        """Ask the device which layout it's in (the spontaneous
+        notifications go to the DAW port we're not bound to). The answer
+        lands in __on_layout_switch_value. Re-arms itself while the
+        passthrough is active."""
+        if not self._native_passthrough_active:
+            return
+        try:
+            self._elements.layout_switch.enquire_value()
+        except Exception:
+            pass
+        if self._passthrough_poll_task is not None:
+            self._passthrough_poll_task.restart()
+
+    @listens("value")
+    def __on_layout_switch_value(self, value):
+        layout = tuple(value) if isinstance(value, (tuple, list)) else (value,)
+        self._log("layout read-back: {}".format(layout))
+        if not self._native_passthrough_active:
+            return
+        if layout == tuple(ids.SESSION_LAYOUT_BYTES):
+            # Only treat session as "come back" once the user has actually
+            # been in a native layout — protects against an early read
+            # racing the layout select at entry.
+            if self._passthrough_armed:
+                self._exit_native_passthrough()
+        else:
+            self._passthrough_armed = True
 
     @listens("selected_track")
     def __on_selected_track_changed(self):
@@ -883,6 +997,8 @@ class Launchpad_Pro_MK3(NovationBase):
         self._send_programmer_cc(
             CHORD_BUTTON_CC,
             LED_CHORD if mode == "chord_mode" else LED_MODE_IDLE)
+        # Custom = native passthrough doorway — always available.
+        self._send_programmer_cc(CUSTOM_BUTTON_CC, LED_MODE_IDLE)
         self._send_programmer_cc(
             SEQUENCER_BUTTON_CC,
             LED_SEQUENCER if mode in _DRUM_MODES + (VARIANT_PICKER_MODE,)
