@@ -33,6 +33,7 @@ from .channel_strip_with_arm_toggle import ChannelStripComponentWithArmToggle
 from .clip_copy_component import ClipCopyComponent
 from .chord_pad_mode import ChordPadComponent
 from .device_profile import (
+    CHORD_BUTTON_CC,
     CLEAR_BUTTON_CC,
     DEVICE_FAMILY_CODE,
     DEVICE_SYSEX_ID,
@@ -45,6 +46,7 @@ from .device_profile import (
     LED_ARM_IDLE,
     LED_ARROW_OCTAVE,
     LED_ARROW_SEMITONE,
+    LED_CHORD,
     LED_CLEAR_HELD,
     LED_CLEAR_IDLE,
     LED_DUPLICATE_HELD,
@@ -87,6 +89,7 @@ from .device_profile import (
 from .drum_4_track_step_sequencer import DrumStep4TrackSequencerComponent
 from .drum_64_step_sequencer import DrumStep64SequencerComponent
 from .drum_step_sequencer import DrumStepSequencerComponent
+from .drum_variant_picker import DrumVariantPickerComponent
 from .edit_mode_component import EditModeComponent
 from .melodic_step_sequencer import MelodicStepSequencerComponent
 from .scene_copy_component import SceneCopyComponent
@@ -110,13 +113,16 @@ SESSION_HOLD_THRESHOLD = 0.3
 # pad is held (same value as the Mini).
 DRUM_VELOCITY_ARROW_STEP = 8
 
-# Main modes that take over the 8x8 grid. Mirrors the Mini's active set
-# (post-ergonomic-pass): chord + drum variants stay constructed but have no
-# UI path in v1. Future variant selection: Shift+Sequencer → grid overlay
-# panel with one pad per variant.
+# Main modes that take over the 8x8 grid for their own UI. The drum
+# variants are reachable through the Shift+Sequencer picker panel; chord
+# has its dedicated button (95). "variant_picker" is the overlay panel
+# itself — also a grid takeover, handled separately (it isn't a
+# sequencer: no arrows, no audition, no scene-slot controls).
 _SEQUENCER_MODES = ("drum_sequence", "drum_64_sequence",
                     "drum_4_track_sequence", "melodic_sequence",
                     "chord_mode")
+_DRUM_MODES = ("drum_sequence", "drum_64_sequence", "drum_4_track_sequence")
+VARIANT_PICKER_MODE = "variant_picker"
 
 
 class Launchpad_Pro_MK3(NovationBase):
@@ -130,6 +136,11 @@ class Launchpad_Pro_MK3(NovationBase):
         # Session-button preview state (press started in a sequencer mode).
         self._session_preview_press_time = None
         self._session_preview_return_mode = None
+        # Drum-variant picker state: which variant the Sequencer button
+        # opens on a plain press (the last one used), and which mode to
+        # return to when the picker is cancelled.
+        self._last_drum_variant = "drum_sequence"
+        self._picker_return_mode = None
         # Notification plumbing — created early so components can take the
         # bus reference at construction time. _event_bus = None would make
         # every _emit() a no-op (kill switch).
@@ -178,6 +189,7 @@ class Launchpad_Pro_MK3(NovationBase):
         self._create_drum_4_track_sequencer()
         self._create_melodic_sequencer()
         self._create_chord_pad_mode()
+        self._create_variant_picker()
         self._create_main_modes()
         self._Launchpad_Pro_MK3__on_selected_track_changed.subject = self.song.view
         self._Launchpad_Pro_MK3__on_session_mode_button_value.subject = self._elements.session_mode_button
@@ -192,6 +204,7 @@ class Launchpad_Pro_MK3(NovationBase):
         self._Launchpad_Pro_MK3__on_duplicate_button_value.subject = self._elements.duplicate_button
         self._Launchpad_Pro_MK3__on_quantize_button_value.subject = self._elements.quantize_button
         self._Launchpad_Pro_MK3__on_note_mode_button_value.subject = self._elements.note_mode_button
+        self._Launchpad_Pro_MK3__on_chord_mode_button_value.subject = self._elements.chord_mode_button
         self._Launchpad_Pro_MK3__on_sequencer_mode_button_value.subject = self._elements.sequencer_mode_button
         self._Launchpad_Pro_MK3__on_record_arm_button_value.subject = self._elements.record_arm_button
         self._Launchpad_Pro_MK3__on_mute_button_value.subject = self._elements.mute_button
@@ -311,8 +324,9 @@ class Launchpad_Pro_MK3(NovationBase):
             special_shift=None)
 
     def _create_drum_64_sequencer(self):
-        """Constructed for parity with the Mini but not reachable in v1
-        (no UI path — see _SEQUENCER_MODES note)."""
+        """Single-pad 64-step variant — reached via the Shift+Sequencer
+        picker panel. Capture/Quantize/Shift live on dedicated buttons;
+        only the cycle slot (6) stays on the scene column."""
         self._drum_64_step_sequencer = DrumStep64SequencerComponent(
             name="Drum_64_Step_Sequencer",
             is_enabled=False,
@@ -321,9 +335,12 @@ class Launchpad_Pro_MK3(NovationBase):
             layer=Layer(grid_matrix="clip_launch_matrix"))
         self._drum_64_step_sequencer.set_control_buttons(
             self._elements.scene_launch_buttons_raw)
+        self._drum_64_step_sequencer.configure_slots(
+            capture=None, quantize=None, shift=None)
 
     def _create_drum_4_track_sequencer(self):
-        """Constructed for parity with the Mini but not reachable in v1."""
+        """4-track × 16-step variant — reached via the Shift+Sequencer
+        picker panel. Same dedicated-button slot config as drum_64."""
         self._drum_4_track_step_sequencer = DrumStep4TrackSequencerComponent(
             name="Drum_4_Track_Step_Sequencer",
             is_enabled=False,
@@ -332,6 +349,8 @@ class Launchpad_Pro_MK3(NovationBase):
             layer=Layer(grid_matrix="clip_launch_matrix"))
         self._drum_4_track_step_sequencer.set_control_buttons(
             self._elements.scene_launch_buttons_raw)
+        self._drum_4_track_step_sequencer.configure_slots(
+            capture=None, quantize=None, shift=None)
 
     def _create_melodic_sequencer(self):
         self._melodic_step_sequencer = MelodicStepSequencerComponent(name="Melodic_Step_Sequencer",
@@ -346,28 +365,41 @@ class Launchpad_Pro_MK3(NovationBase):
         self._melodic_step_sequencer.set_direct_slot_actions(True)
 
     def _create_chord_pad_mode(self):
-        """Constructed for parity with the Mini but not reachable in v1
-        (the dedicated Chord button is reserved for it — wire a listener
-        + add_mode when re-enabling)."""
+        """8x8 chord-pad mode — on its dedicated Chord button (95). Scene
+        slots keep the Mini layout (capture/key/scale/chord-type/inversion)."""
         self._chord_pad_mode = ChordPadComponent(name="Chord_Pad_Mode",
           is_enabled=False,
           event_bus=self._event_bus,
           layer=Layer(grid_matrix="clip_launch_matrix"))
         self._chord_pad_mode.set_control_buttons(self._elements.scene_launch_buttons_raw)
 
+    def _create_variant_picker(self):
+        """Shift+Sequencer → grid overlay panel with one band per drum
+        variant. Picking a band switches the main mode; a plain Sequencer
+        press cancels back to where the user came from."""
+        self._variant_picker = DrumVariantPickerComponent(
+            name="Drum_Variant_Picker",
+            is_enabled=False,
+            on_select=self._on_drum_variant_selected,
+            logger=self._log,
+            layer=Layer(grid_matrix="clip_launch_matrix"))
+
     def _create_main_modes(self):
         """Direct mode buttons — Session (93), Note (94) → melodic,
-        Sequencer (97) → drum. Pressing the active mode's button returns
-        to session. No hold-to-select, no cycling."""
+        Chord (95) → chord pads, Sequencer (97) → last drum variant
+        (Shift+Sequencer → variant picker panel). Pressing the active
+        mode's button returns to session. No hold-to-select, no cycling."""
         self._main_modes = ModesComponent(name="Main_Modes",
           is_enabled=False,
           enable_skinning=False,
           support_momentary_mode_cycling=False)
         self._main_modes.add_mode("session", None)
         self._main_modes.add_mode("drum_sequence", None)
+        self._main_modes.add_mode("drum_64_sequence", None)
+        self._main_modes.add_mode("drum_4_track_sequence", None)
         self._main_modes.add_mode("melodic_sequence", None)
-        # DISABLED (mirrors the Mini's ergonomic pass) — components exist,
-        # no UI path: drum_64_sequence, drum_4_track_sequence, chord_mode.
+        self._main_modes.add_mode("chord_mode", None)
+        self._main_modes.add_mode(VARIANT_PICKER_MODE, None)
         self._main_modes.selected_mode = "session"
         self._Launchpad_Pro_MK3__on_main_mode_changed.subject = self._main_modes
         self._main_modes.set_enabled(True)
@@ -424,8 +456,11 @@ class Launchpad_Pro_MK3(NovationBase):
 
     @listens("selected_mode")
     def __on_main_mode_changed(self, mode):
-        grid_takeover = mode in _SEQUENCER_MODES
+        grid_takeover = mode in _SEQUENCER_MODES or mode == VARIANT_PICKER_MODE
         self._log("main mode changed: {}".format(mode))
+        if mode in _DRUM_MODES:
+            # A plain Sequencer press re-opens the variant last used.
+            self._last_drum_variant = mode
         # Transport stays live in every main mode.
         self._transport.set_enabled(True)
         self._drum_step_sequencer.set_enabled(False)
@@ -433,13 +468,23 @@ class Launchpad_Pro_MK3(NovationBase):
         self._drum_4_track_step_sequencer.set_enabled(False)
         self._melodic_step_sequencer.set_enabled(False)
         self._chord_pad_mode.set_enabled(False)
+        self._variant_picker.set_enabled(False)
         if grid_takeover:
             self._set_session_components_enabled(False)
             self._restore_clip_launch_matrix()
-            active = self._sequencer_for_mode(mode)
-            if active is not None:
-                active.set_enabled(True)
-            self.set_controlled_track(self.song.view.selected_track)
+            if mode == VARIANT_PICKER_MODE:
+                self._variant_picker.set_current_variant(self._last_drum_variant)
+                self._variant_picker.set_enabled(True)
+                active = None
+            else:
+                active = self._sequencer_for_mode(mode)
+                if active is not None:
+                    active.set_enabled(True)
+                    # Sync the shift layer with the physical button — the
+                    # mode may have changed while Shift was held (e.g.
+                    # Shift+Sequencer → picker → variant) or released.
+                    active.set_device_shift_held(self._is_shift_pressed())
+                self.set_controlled_track(self.song.view.selected_track)
             self._request_midi_map_rebuild()
             self._emit(Event.MAIN_MODE_CHANGED, mode=mode)
             if active is not None:
@@ -482,9 +527,34 @@ class Launchpad_Pro_MK3(NovationBase):
             self._toggle_main_mode("melodic_sequence")
 
     @listens("value")
-    def __on_sequencer_mode_button_value(self, value):
+    def __on_chord_mode_button_value(self, value):
         if value:
-            self._toggle_main_mode("drum_sequence")
+            self._toggle_main_mode("chord_mode")
+
+    @listens("value")
+    def __on_sequencer_mode_button_value(self, value):
+        """Sequencer (97). Plain press: open the last-used drum variant
+        (press again → back to session). Shift+press: open the variant
+        picker panel. Press while the picker is up: cancel back to the
+        mode the picker was opened from."""
+        if not value:
+            return
+        current = self._main_modes.selected_mode
+        if current == VARIANT_PICKER_MODE:
+            self._main_modes.selected_mode = (self._picker_return_mode
+                                              or "session")
+            self._picker_return_mode = None
+            return
+        if self._is_shift_pressed():
+            self._picker_return_mode = current
+            self._main_modes.selected_mode = VARIANT_PICKER_MODE
+            return
+        self._toggle_main_mode(self._last_drum_variant)
+
+    def _on_drum_variant_selected(self, mode):
+        """Callback from the picker panel — commit the chosen variant."""
+        self._picker_return_mode = None
+        self._main_modes.selected_mode = mode
 
     @listens("selected_track")
     def __on_selected_track_changed(self):
@@ -502,6 +572,11 @@ class Launchpad_Pro_MK3(NovationBase):
         no-op — session_modes owns the button (overview double-click)."""
         if value:
             current = self._main_modes.selected_mode
+            if current == VARIANT_PICKER_MODE:
+                # Session press cancels the picker straight to session.
+                self._picker_return_mode = None
+                self._main_modes.selected_mode = "session"
+                return
             if current in _SEQUENCER_MODES:
                 if self._is_shift_pressed():
                     seq = self._sequencer_for_mode(current)
@@ -757,11 +832,12 @@ class Launchpad_Pro_MK3(NovationBase):
     def _update_modifier_leds(self):
         """Shift/Clear/Duplicate/Quantise LEDs: idle dim where the button
         does something in the current mode, bright while held, dark where
-        inert (e.g. Clear/Duplicate in melodic — no action layer there)."""
+        inert. Availability follows the active component's capabilities
+        (e.g. drum_64 has quantize but no delete/duplicate action layer)."""
         mode = (self._main_modes.selected_mode
                 if hasattr(self, "_main_modes") else "session")
-        in_drum = self._is_drum_mode() if hasattr(self, "_main_modes") else False
         in_session = mode == "session"
+        target = self._sequencer_for_mode(mode)
         shift_held = self._is_shift_pressed()
         self._send_programmer_cc(
             SHIFT_BUTTON_CC, LED_SHIFT_HELD if shift_held else LED_SHIFT_IDLE)
@@ -776,14 +852,17 @@ class Launchpad_Pro_MK3(NovationBase):
                 held = False
             self._send_programmer_cc(cc, held_color if held else idle_color)
 
-        clear_dup_available = in_session or in_drum
+        clear_dup_available = in_session or (
+            target is not None and hasattr(target, "set_action_modifier"))
         modifier_led(self._elements.clear_button, CLEAR_BUTTON_CC,
                      LED_CLEAR_HELD, LED_CLEAR_IDLE, clear_dup_available)
         modifier_led(self._elements.duplicate_button, DUPLICATE_BUTTON_CC,
                      LED_DUPLICATE_HELD, LED_DUPLICATE_IDLE, clear_dup_available)
+        quantize_available = (target is not None
+                              and hasattr(target, "quantize_selected"))
         self._send_programmer_cc(
             QUANTIZE_BUTTON_CC,
-            LED_QUANTIZE_IDLE if mode in _SEQUENCER_MODES else LED_OFF)
+            LED_QUANTIZE_IDLE if quantize_available else LED_OFF)
 
     def _session_button_color_for_mode(self, mode):
         if mode in _SEQUENCER_MODES:
@@ -802,9 +881,12 @@ class Launchpad_Pro_MK3(NovationBase):
             NOTE_BUTTON_CC,
             LED_MELODIC if mode == "melodic_sequence" else LED_MODE_IDLE)
         self._send_programmer_cc(
+            CHORD_BUTTON_CC,
+            LED_CHORD if mode == "chord_mode" else LED_MODE_IDLE)
+        self._send_programmer_cc(
             SEQUENCER_BUTTON_CC,
-            LED_SEQUENCER if mode in ("drum_sequence", "drum_64_sequence",
-                                      "drum_4_track_sequence") else LED_MODE_IDLE)
+            LED_SEQUENCER if mode in _DRUM_MODES + (VARIANT_PICKER_MODE,)
+            else LED_MODE_IDLE)
         if mode in _SEQUENCER_MODES:
             self._send_programmer_cc(UP_BUTTON_CC, LED_ARROW_OCTAVE)
             self._send_programmer_cc(DOWN_BUTTON_CC, LED_ARROW_OCTAVE)

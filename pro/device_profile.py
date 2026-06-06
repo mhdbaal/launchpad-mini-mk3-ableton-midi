@@ -84,7 +84,6 @@ TRACK_SELECT_FIRST_CC = 101  # 101-108, left → right
 # LEDs kept dark. Reserved for future features (faders need the DAW-mode
 # fader layout; Custom/Projects/Fixed Length unassigned).
 INERT_BUTTON_CCS = (
-    CHORD_BUTTON_CC,
     CUSTOM_BUTTON_CC,
     PROJECTS_BUTTON_CC,
     FIXED_LENGTH_BUTTON_CC,

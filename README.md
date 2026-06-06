@@ -241,7 +241,7 @@ The Pro port keeps the same modes and sequencers but uses the Pro's dedicated bu
 - **Clear / Duplicate** — hold + tap to delete/duplicate clips & scenes (session) or steps/pads/pages (drum sequencer). Shift+Duplicate doubles the loop.
 - **Quantise** — quantize selection in sequencer modes. **Shift+Record** — Capture MIDI.
 - **Play / Record** — dedicated transport.
-- **Note / Sequencer buttons** — switch directly to the melodic / drum sequencer (press again to return to Session).
+- **Note / Chord / Sequencer buttons** — switch directly to the melodic sequencer / chord pads / drum sequencer (press again to return to Session). **Shift+Sequencer** opens a picker panel on the grid to choose between the three drum variants (classic 4×8, 64-step single pad, 4-track × 16 steps); a plain Sequencer press reopens the last variant used.
 - **Track-select row + Record Arm/Mute/Solo/Stop Clip** — mixer modes below the grid, so the full 8×8 grid stays clips and all 8 scene buttons launch scenes. Shift+Record Arm = Undo, Shift+Mute = Redo, Shift+Stop Clip = Stop All Clips.
 
 **The Pro script installs as a separate control surface** (`Launchpad Pro MK3 Custom`) — the factory `Launchpad Pro MK3` script is left untouched and both coexist in Live's Control Surface list.

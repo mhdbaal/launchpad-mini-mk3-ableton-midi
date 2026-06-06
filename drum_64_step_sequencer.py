@@ -150,6 +150,13 @@ class DrumStep64SequencerComponent(Component):
         self._playhead = None
         self._notes = []
         self._control_buttons = ()
+        # Scene-button slot assignments. Defaults are the Mini MK3 layout
+        # (module constants); device wiring can remap or disable (None)
+        # individual slots via configure_slots().
+        self._capture_slot = CAPTURE_SLOT
+        self._quantize_slot = QUANTIZE_SLOT
+        self._shift_slot = SHIFT_SLOT
+        self._cycle_slot = CYCLE_SLOT
         self._control_button_listeners = []
         self._led_debug_count = 0
         self._delayed_update_task = self._tasks.add(
@@ -1079,12 +1086,41 @@ class DrumStep64SequencerComponent(Component):
             return
         if self._is_main_mode_selector_held():
             return
-        if index == CAPTURE_SLOT:
+        if index == self._capture_slot:
             self._capture_midi()
-        elif index == QUANTIZE_SLOT:
+        elif index == self._quantize_slot:
             self._quantize_selected()
-        elif index == CYCLE_SLOT:
+        elif index == self._cycle_slot:
             self._cycle_matrix_mode()
+
+    # ---- public API for device-specific wiring -------------------------
+    # The Mini reaches these actions through scene-button slots; the Pro
+    # MK3 wiring calls them directly from dedicated hardware buttons.
+
+    def configure_slots(self, **overrides):
+        """Remap or disable scene-button slot assignments.
+
+        Keys: capture, quantize, shift, cycle. Values: slot index 0-7, or
+        None to disable the slot. Defaults are the Mini MK3 layout.
+        """
+        for key, value in overrides.items():
+            attr = "_{}_slot".format(key)
+            if not hasattr(self, attr):
+                raise ValueError("unknown slot key: {}".format(key))
+            setattr(self, attr, value)
+        if self.is_enabled():
+            self._update_control_leds()
+
+    def capture_midi(self):
+        """Public: trigger Capture MIDI (same path as the capture slot)."""
+        if self.is_enabled():
+            self._capture_midi()
+
+    def quantize_selected(self):
+        """Public: quantize the current selection (held steps, else the
+        visible pads' notes)."""
+        if self.is_enabled():
+            self._quantize_selected()
 
     def _capture_midi(self):
         """Post-capture: re-resolve the clip and re-arm the build-out
@@ -1155,15 +1191,18 @@ class DrumStep64SequencerComponent(Component):
                          if getattr(self.song, "can_capture_midi", False)
                          else "DrumSequencer.Control.CaptureMidi")
         cycle_color = self._cycle_button_color()
-        colors = (
-            capture_color,                        # slot 0
-            "DrumSequencer.Control.Quantize",     # slot 1
-            "DefaultButton.Disabled",             # slot 2
-            "DefaultButton.Disabled",             # slot 3
-            "DefaultButton.Disabled",             # slot 4
-            shift_color,                          # slot 5 = seq shift
-            cycle_color,                          # slot 6
-            "DefaultButton.Disabled")             # slot 7 reserved
+        # Colors are assembled per configured slot; unassigned (or None,
+        # i.e. disabled) slots stay dark.
+        colors = ["DefaultButton.Disabled"] * len(self._control_buttons)
+
+        def assign(slot, color):
+            if slot is not None and 0 <= slot < len(colors):
+                colors[slot] = color
+
+        assign(self._capture_slot, capture_color)
+        assign(self._quantize_slot, "DrumSequencer.Control.Quantize")
+        assign(self._shift_slot, shift_color)
+        assign(self._cycle_slot, cycle_color)
         for index, button in enumerate(self._control_buttons):
             try:
                 button.set_light(colors[index] if self.is_enabled() else "DefaultButton.Disabled")
