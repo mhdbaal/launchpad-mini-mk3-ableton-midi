@@ -13,10 +13,11 @@
 #   - Quantise (40) replaces the sequencer quantize slot.
 #   - Play (20) / Record (10) replace Drums/Keys transport; Shift+Record =
 #     Capture MIDI.
-#   - Top-row mode buttons: PLAIN press = the device's NATIVE mode
-#     (passthrough: Note / Chord / Custom / Sequencer firmware engines);
-#     SHIFT+press = our custom modes (melodic / chord pads / drum
-#     sequencers). The User hold-to-select machinery doesn't exist here.
+#   - Top-row mode buttons = the device's NATIVE modes (passthrough:
+#     Note / Chord / Custom / Sequencer firmware engines). OUR custom
+#     modes (melodic / chord pads / drum sequencers) live in the
+#     Shift+Session mode panel — grid zones, no collision with the
+#     firmware's own Shift+button settings combos.
 #   - The track-select row (CC 101-108) + function row (Record Arm/Mute/
 #     Solo/Stop Clip, CC 1/2/3/8) carry the mixer modes, so the 8x8 grid
 #     keeps all 8 rows for clips and all 8 scene buttons launch scenes.
@@ -93,7 +94,7 @@ from .device_profile import (
 from .drum_4_track_step_sequencer import DrumStep4TrackSequencerComponent
 from .drum_64_step_sequencer import DrumStep64SequencerComponent
 from .drum_step_sequencer import DrumStepSequencerComponent
-from .drum_variant_picker import DrumVariantPickerComponent
+from .mode_picker import ModePickerComponent
 from .edit_mode_component import EditModeComponent
 from .melodic_step_sequencer import MelodicStepSequencerComponent
 from .scene_copy_component import SceneCopyComponent
@@ -117,16 +118,19 @@ SESSION_HOLD_THRESHOLD = 0.3
 # pad is held (same value as the Mini).
 DRUM_VELOCITY_ARROW_STEP = 8
 
-# Main modes that take over the 8x8 grid for their own UI. The drum
-# variants are reachable through the Shift+Sequencer picker panel; chord
-# has its dedicated button (95). "variant_picker" is the overlay panel
-# itself — also a grid takeover, handled separately (it isn't a
-# sequencer: no arrows, no audition, no scene-slot controls).
+# Main modes that take over the 8x8 grid for their own UI. ALL of our
+# custom modes are reached through the Shift+Session mode panel (the
+# firmware owns every Shift+mode-button combo in native land — settings
+# pages — and a stray Shift+Session in native land degrades gracefully:
+# the firmware switches to the session layout, which our polling reclaim
+# detects). "mode_picker" is the overlay panel itself — also a grid
+# takeover, handled separately (it isn't a sequencer: no arrows, no
+# audition, no scene-slot controls).
 _SEQUENCER_MODES = ("drum_sequence", "drum_64_sequence",
                     "drum_4_track_sequence", "melodic_sequence",
                     "chord_mode")
 _DRUM_MODES = ("drum_sequence", "drum_64_sequence", "drum_4_track_sequence")
-VARIANT_PICKER_MODE = "variant_picker"
+MODE_PICKER_MODE = "mode_picker"
 # Native passthrough: the script steps aside (Programmer mode off, DAW
 # mode on) so the device's own Note/Chord/Custom/Sequencer engines run —
 # REAL multi-note chords and the hardware step sequencer, with the played
@@ -151,10 +155,8 @@ class Launchpad_Pro_MK3(NovationBase):
         # Session-button preview state (press started in a sequencer mode).
         self._session_preview_press_time = None
         self._session_preview_return_mode = None
-        # Drum-variant picker state: which variant the Sequencer button
-        # opens on a plain press (the last one used), and which mode to
-        # return to when the picker is cancelled.
-        self._last_drum_variant = "drum_sequence"
+        # Mode-panel state: which mode to return to when the panel is
+        # cancelled (Projects again / Session).
         self._picker_return_mode = None
         # Native passthrough state. `_passthrough_armed` flips once we've
         # seen a non-session layout — only then does a session-layout
@@ -210,10 +212,11 @@ class Launchpad_Pro_MK3(NovationBase):
         self._create_drum_4_track_sequencer()
         self._create_melodic_sequencer()
         self._create_chord_pad_mode()
-        self._create_variant_picker()
+        self._create_mode_picker()
         self._create_main_modes()
         self._Launchpad_Pro_MK3__on_selected_track_changed.subject = self.song.view
         self._Launchpad_Pro_MK3__on_session_mode_button_value.subject = self._elements.session_mode_button
+        self._Launchpad_Pro_MK3__on_pin_scene_button_value.subject = self._elements.scene_launch_buttons_raw[0]
         self._Launchpad_Pro_MK3__on_up_button_value.subject = self._elements.up_button
         self._Launchpad_Pro_MK3__on_down_button_value.subject = self._elements.down_button
         self._Launchpad_Pro_MK3__on_left_button_value.subject = self._elements.left_button
@@ -404,15 +407,15 @@ class Launchpad_Pro_MK3(NovationBase):
           layer=Layer(grid_matrix="clip_launch_matrix"))
         self._chord_pad_mode.set_control_buttons(self._elements.scene_launch_buttons_raw)
 
-    def _create_variant_picker(self):
-        """Shift+Sequencer (while already in a drum variant) → grid
-        overlay panel with one band per drum variant. Picking a band
-        switches the main mode; Shift+Sequencer again or Session cancels
-        back to where the user came from."""
-        self._variant_picker = DrumVariantPickerComponent(
-            name="Drum_Variant_Picker",
+    def _create_mode_picker(self):
+        """Shift+Session → grid overlay panel with one zone per custom
+        mode (melodic / chord pads / 3 drum variants). Picking a zone
+        switches the main mode; Shift+Session again or plain Session
+        cancels back to where the user came from."""
+        self._mode_picker = ModePickerComponent(
+            name="Mode_Picker",
             is_enabled=False,
-            on_select=self._on_drum_variant_selected,
+            on_select=self._on_picker_mode_selected,
             logger=self._log,
             layer=Layer(grid_matrix="clip_launch_matrix"))
 
@@ -431,7 +434,7 @@ class Launchpad_Pro_MK3(NovationBase):
         self._main_modes.add_mode("drum_4_track_sequence", None)
         self._main_modes.add_mode("melodic_sequence", None)
         self._main_modes.add_mode("chord_mode", None)
-        self._main_modes.add_mode(VARIANT_PICKER_MODE, None)
+        self._main_modes.add_mode(MODE_PICKER_MODE, None)
         self._main_modes.add_mode(NATIVE_PASSTHROUGH_MODE, None)
         self._main_modes.selected_mode = "session"
         self._Launchpad_Pro_MK3__on_main_mode_changed.subject = self._main_modes
@@ -490,11 +493,8 @@ class Launchpad_Pro_MK3(NovationBase):
     @listens("selected_mode")
     def __on_main_mode_changed(self, mode):
         grid_takeover = mode in _SEQUENCER_MODES or mode in (
-            VARIANT_PICKER_MODE, NATIVE_PASSTHROUGH_MODE)
+            MODE_PICKER_MODE, NATIVE_PASSTHROUGH_MODE)
         self._log("main mode changed: {}".format(mode))
-        if mode in _DRUM_MODES:
-            # A plain Sequencer press re-opens the variant last used.
-            self._last_drum_variant = mode
         # Transport stays live in every main mode.
         self._transport.set_enabled(True)
         self._drum_step_sequencer.set_enabled(False)
@@ -502,7 +502,7 @@ class Launchpad_Pro_MK3(NovationBase):
         self._drum_4_track_step_sequencer.set_enabled(False)
         self._melodic_step_sequencer.set_enabled(False)
         self._chord_pad_mode.set_enabled(False)
-        self._variant_picker.set_enabled(False)
+        self._mode_picker.set_enabled(False)
         if grid_takeover:
             self._set_session_components_enabled(False)
             self._restore_clip_launch_matrix()
@@ -511,9 +511,9 @@ class Launchpad_Pro_MK3(NovationBase):
                 # released so the device's native-mode notes flow through
                 # port 1 straight into the armed track.
                 active = None
-            elif mode == VARIANT_PICKER_MODE:
-                self._variant_picker.set_current_variant(self._last_drum_variant)
-                self._variant_picker.set_enabled(True)
+            elif mode == MODE_PICKER_MODE:
+                self._mode_picker.set_current_mode(self._picker_return_mode)
+                self._mode_picker.set_enabled(True)
                 active = None
             else:
                 active = self._sequencer_for_mode(mode)
@@ -554,39 +554,26 @@ class Launchpad_Pro_MK3(NovationBase):
         return (hasattr(self, "_main_modes")
                 and self._main_modes.selected_mode in _SEQUENCER_MODES)
 
-    def _toggle_main_mode(self, mode):
-        """Dedicated mode button press: switch to `mode`, or back to
-        session when `mode` is already active."""
-        self._main_modes.selected_mode = (
-            "session" if self._main_modes.selected_mode == mode else mode)
-
     # Mode-button philosophy: PLAIN press = the device's NATIVE mode
-    # (passthrough — the firmware engines are the primary experience);
-    # SHIFT+press = our custom script modes. Return from native land =
-    # Session on the device (the script is deaf while native).
+    # (passthrough — the firmware engines are the primary experience).
+    # OUR custom modes live behind the Projects mode panel — the firmware
+    # owns every Shift+mode-button combo in native land (settings pages),
+    # so Shift combos are deliberately left to it on both sides. Return
+    # from native land = Session on the device (the script is deaf there).
 
     @listens("value")
     def __on_note_mode_button_value(self, value):
-        """Note (94). Plain: NATIVE Note mode. Shift: our melodic step
-        sequencer (Shift+Note again → back to session)."""
-        if not value:
-            return
-        if self._is_shift_pressed():
-            self._toggle_main_mode("melodic_sequence")
-        else:
+        """Note (94): NATIVE Note mode. Our melodic sequencer lives in
+        the Projects panel."""
+        if value and not self._is_shift_pressed():
             self._enter_native_passthrough(ids.NOTE_LAYOUT_BYTES)
 
     @listens("value")
     def __on_chord_mode_button_value(self, value):
-        """Chord (95). Plain: NATIVE chord engine (real multi-note chords
-        + 16 user chord slots). Shift: our chord-pad mode (single root
-        note per pad — pair with Live's Chord MIDI effect or the future
-        M4L companion)."""
-        if not value:
-            return
-        if self._is_shift_pressed():
-            self._toggle_main_mode("chord_mode")
-        else:
+        """Chord (95): NATIVE chord engine (real multi-note chords + 16
+        user chord slots). Our chord-pad mode lives in the Projects
+        panel."""
+        if value and not self._is_shift_pressed():
             self._enter_native_passthrough(ids.CHORD_LAYOUT_BYTES)
 
     @listens("value")
@@ -597,29 +584,46 @@ class Launchpad_Pro_MK3(NovationBase):
 
     @listens("value")
     def __on_sequencer_mode_button_value(self, value):
-        """Sequencer (97). Plain: NATIVE hardware sequencer (Steps
-        layout). Shift: OUR drum sequencers — opens the last-used
-        variant; Shift+press again while already in a drum variant opens
-        the variant picker panel; Shift+press while the picker is up
-        cancels back."""
-        if not value:
-            return
-        if not self._is_shift_pressed():
+        """Sequencer (97): NATIVE hardware sequencer (Steps layout). Our
+        drum sequencers live in the Projects panel."""
+        if value and not self._is_shift_pressed():
             self._enter_native_passthrough(ids.SEQUENCER_STEPS_LAYOUT_BYTES)
-            return
+
+    def _toggle_mode_picker(self):
+        """Shift+Session: OUR MODES panel — large grid zones for melodic /
+        chord pads / the three drum variants. Shift+Session again (or
+        plain Session) cancels back. Why this gesture: the firmware
+        claims every Shift+mode-button combo in native land (settings
+        pages), and if the reflex fires while native, the firmware sees
+        Session → layout switch → our polling reclaim brings the user
+        home anyway. Same gesture, graceful in both worlds."""
         current = self._main_modes.selected_mode
-        if current == VARIANT_PICKER_MODE:
+        if current == MODE_PICKER_MODE:
             self._main_modes.selected_mode = (self._picker_return_mode
                                               or "session")
             self._picker_return_mode = None
-        elif current in _DRUM_MODES:
-            self._picker_return_mode = current
-            self._main_modes.selected_mode = VARIANT_PICKER_MODE
-        else:
-            self._main_modes.selected_mode = self._last_drum_variant
+            return
+        self._picker_return_mode = current
+        self._main_modes.selected_mode = MODE_PICKER_MODE
 
-    def _on_drum_variant_selected(self, mode):
-        """Callback from the picker panel — commit the chosen variant."""
+    @listens("value")
+    def __on_pin_scene_button_value(self, value):
+        """Scene slot 0 in sequencer modes = toggle track pin (relocated
+        from Shift+Session, which now opens the mode panel). Chord mode
+        keeps its own slot-0 function (capture) — skipped there. Feedback:
+        the Session button turns blue while pinned."""
+        if not value:
+            return
+        mode = self._main_modes.selected_mode
+        if mode not in _SEQUENCER_MODES or mode == "chord_mode":
+            return
+        seq = self._sequencer_for_mode(mode)
+        if seq is not None and hasattr(seq, "toggle_pin"):
+            pinned = seq.toggle_pin()
+            self._log("toggle_pin on {} → pinned={}".format(mode, pinned))
+
+    def _on_picker_mode_selected(self, mode):
+        """Callback from the mode panel — commit the chosen mode."""
         self._picker_return_mode = None
         self._main_modes.selected_mode = mode
 
@@ -693,25 +697,22 @@ class Launchpad_Pro_MK3(NovationBase):
 
     @listens("value")
     def __on_session_mode_button_value(self, value):
-        """In sequencer modes the Session button is a return-to-session
-        control with momentary-preview semantics (tap latches, hold
-        previews and reverts). Shift+Session toggles the active
-        sequencer's track pin. In session main mode this listener is a
-        no-op — session_modes owns the button (overview double-click)."""
+        """Shift+Session (any of our modes): toggle the mode panel. In
+        sequencer modes a plain press is a return-to-session control with
+        momentary-preview semantics (tap latches, hold previews and
+        reverts). In session main mode a plain press is a no-op here —
+        session_modes owns the button (overview double-click)."""
         if value:
+            if self._is_shift_pressed():
+                self._toggle_mode_picker()
+                return
             current = self._main_modes.selected_mode
-            if current == VARIANT_PICKER_MODE:
-                # Session press cancels the picker straight to session.
+            if current == MODE_PICKER_MODE:
+                # Plain Session press cancels the picker straight to session.
                 self._picker_return_mode = None
                 self._main_modes.selected_mode = "session"
                 return
             if current in _SEQUENCER_MODES:
-                if self._is_shift_pressed():
-                    seq = self._sequencer_for_mode(current)
-                    if seq is not None and hasattr(seq, "toggle_pin"):
-                        pinned = seq.toggle_pin()
-                        self._log("toggle_pin on {} → pinned={}".format(current, pinned))
-                        return
                 self._session_preview_press_time = time.time()
                 self._session_preview_return_mode = current
                 self._main_modes.selected_mode = "session"
@@ -1015,8 +1016,7 @@ class Launchpad_Pro_MK3(NovationBase):
         self._send_programmer_cc(CUSTOM_BUTTON_CC, LED_MODE_IDLE)
         self._send_programmer_cc(
             SEQUENCER_BUTTON_CC,
-            LED_SEQUENCER if mode in _DRUM_MODES + (VARIANT_PICKER_MODE,)
-            else LED_MODE_IDLE)
+            LED_SEQUENCER if mode in _DRUM_MODES else LED_MODE_IDLE)
         if mode in _SEQUENCER_MODES:
             self._send_programmer_cc(UP_BUTTON_CC, LED_ARROW_OCTAVE)
             self._send_programmer_cc(DOWN_BUTTON_CC, LED_ARROW_OCTAVE)

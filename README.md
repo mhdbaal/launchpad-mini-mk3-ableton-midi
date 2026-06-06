@@ -241,7 +241,8 @@ The Pro port keeps the same modes and sequencers but uses the Pro's dedicated bu
 - **Clear / Duplicate** — hold + tap to delete/duplicate clips & scenes (session) or steps/pads/pages (drum sequencer). Shift+Duplicate doubles the loop.
 - **Quantise** — quantize selection in sequencer modes. **Shift+Record** — Capture MIDI.
 - **Play / Record** — dedicated transport.
-- **Note / Chord / Custom / Sequencer buttons** — plain press = the **native firmware modes** (Note, Chord with its 16 saveable chord slots, Custom Modes, hardware step sequencer), with played notes flowing straight into the armed track. **Shift+button = the custom script modes**: Shift+Note = melodic sequencer, Shift+Chord = chord pads, Shift+Sequencer = drum sequencer (again while in a drum mode = picker panel to choose between the three variants: classic 4×8, 64-step single pad, 4-track × 16 steps).
+- **Note / Chord / Custom / Sequencer buttons** — the **native firmware modes** (Note, Chord with its 16 saveable chord slots, Custom Modes, hardware step sequencer), with played notes flowing straight into the armed track.
+- **Shift+Session = the custom-modes panel** — five large zones on the grid to pick the melodic sequencer, chord pads, or one of the three drum sequencer variants (classic 4×8, 64-step single pad, 4-track × 16 steps). Shift+Session again (or plain Session) cancels. The same reflex works from native land too: the firmware switches to Session and the script takes back over.
 - **Track-select row + Record Arm/Mute/Solo/Stop Clip** — mixer modes below the grid, so the full 8×8 grid stays clips and all 8 scene buttons launch scenes. Shift+Record Arm = Undo, Shift+Mute = Redo, Shift+Stop Clip = Stop All Clips.
 - **Returning from native modes** — the script is hands-off while a native mode runs; press **Session on the device** to come back to the custom script.
 

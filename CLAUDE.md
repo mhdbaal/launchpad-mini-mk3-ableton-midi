@@ -70,7 +70,7 @@ Shared `.py` files live at the **repo root**; device-specific modules live in `m
 | `drum_step_sequencer.py` | 4×8 step grid + 4×4 drum-pad selector + 4×4 loop/grid selector. Step-hold gestures (velocity/nudge/extend). Owns LED rendering + audition. |
 | `melodic_step_sequencer.py` | 7×8 pitch×step grid + dual-purpose row 0 (page selector + preview toggle when shift held). |
 | `chord_pad_mode.py` | 8×8 chord-pad grid (cols = scale degrees, rows = octave shift). 1-1 audition translation → each pad triggers one root note. Emits `CHORD_TRIGGERED` with full diatonic chord pitches. |
-| `drum_variant_picker.py` | Pro-only grid overlay (Shift+Sequencer): three bands to pick drum / drum_64 / drum_4_track. Raw palette LED writes; `on_select` callback into the wiring. |
+| `mode_picker.py` | Pro-only grid overlay (Shift+Session): five zones to pick melodic / chord / drum / drum_64 / drum_4_track. Raw palette LED writes; `on_select` callback into the wiring. |
 | `event_bus.py` / `events.py` | Tiny sync pubsub. `Event.*` string constants are the contract between emitters and subscribers. |
 | `notification_catalog.py` | `Msg.*` integer wire IDs for LP Notify M4L device. **Append-only.** Plus `GRID_RESOLUTION_INDICES`, `MODE_ID_*`. |
 | `status_bar_subscriber.py` | Single owner of every user-visible `show_message` wording (`_FORMATTERS` table). |
@@ -269,7 +269,7 @@ Components never call `show_message` directly — they emit semantic events on a
 
 `pro/` is a native-UX port of the Mini script: same Programmer-mode takeover, same shared components, but the Mini's button-scarcity workarounds are deleted from the wiring (no User hold-to-select, no double-tap edit entry, no shift lock, no stop-solo-mute tap-cycle, no `_seq_shift_button`). ALL main modes are exposed (unlike the Mini's ergonomic pass): `session` / `drum_sequence` / `drum_64_sequence` / `drum_4_track_sequence` / `melodic_sequence` / `chord_mode`, plus the `variant_picker` overlay.
 
-**Drum variant picker** (`drum_variant_picker.py`): Shift+Sequencer opens a grid overlay — three 2-row bands (rows 0-1 drum, 3-4 drum_64, 6-7 drum_4_track; current variant bright, others dim). Tap a band → that variant; plain Sequencer press while the picker is up → cancel back to `_picker_return_mode`; Session press → session. A plain Sequencer press outside the picker opens `_last_drum_variant` (updated on every drum-mode entry). The picker is a grid-takeover main mode but NOT in `_SEQUENCER_MODES` (no arrows/audition/scene slots; `_sequencer_for_mode` returns None for it).
+**Mode panel** (`mode_picker.py`): **Shift+Session** opens a grid overlay with one zone per custom mode — melodic (top-left 4×4), chord pads (top-right 4×4), drum (bottom-left 4×4), drum_64 (x4-7, y4-5), drum_4_track (x4-7, y6-7); the zone of the mode the user came from renders bright. Tap a zone → that mode; Shift+Session again or plain Session → cancel. Why Shift+Session: the firmware owns every Shift+mode-button combo in native land (Shift+Note = scale settings, Shift+Projects = save…), and a stray Shift+Session in native land degrades gracefully — the firmware switches to the session layout, which the polling reclaim detects. The panel is a grid-takeover main mode but NOT in `_SEQUENCER_MODES` (no arrows/audition/scene slots; `_sequencer_for_mode` returns None for it).
 
 **Installs as `Launchpad_Pro_MK3_Custom` — the factory `Launchpad_Pro_MK3` script is NEVER touched** (unlike the Mini, which replaces its factory script). Both appear in Live's Control Surface dropdown; a pristine factory copy also lives in `.Live 12 Suite_updated/Resources/MIDI Remote Scripts/` if it ever needs restoring. install.sh must never target the factory folder name.
 
@@ -286,11 +286,12 @@ Components never call `show_message` directly — they emit semantic events on a
 | Play (20) / Record (10) | transport; Shift+Record = Capture MIDI (everywhere) | idem |
 | RecArm/Mute/Solo/StopClip (1/2/3/8) | toggle track-row mode (arm/mute/solo/stop); Shift+ = Undo/Redo/—/Stop All (all modes) | combos only |
 | Track row (101-108) | track select (arm-on-2nd-press) or selected role | inert |
-| Session (93) | launch/overview (double-click = overview) | preview-hold; Shift+Session = toggle pin; cancels the variant picker |
-| Note (94) | **plain = NATIVE Note mode** (passthrough) · **Shift+Note = our melodic sequencer** (again → session) | idem |
-| Chord (95) | **plain = NATIVE chord engine** (real multi-note chords + 16 user chord slots) · **Shift+Chord = our chord-pad mode** | idem |
-| Custom (96) | **plain = NATIVE Custom Modes** layout `(3,0,0)` (passthrough) | idem |
-| Sequencer (97) | **plain = NATIVE hardware sequencer** (Steps `(7,0,0)`) · **Shift+Sequencer = our drum sequencers**: opens `_last_drum_variant`; again while in a drum variant = variant picker; again while picker up = cancel | idem |
+| Session (93) | launch/overview (double-click = overview) · **Shift+Session = OUR MODES panel** (toggle) | preview-hold (plain); Shift+Session = panel; plain press cancels the panel |
+| Note (94) | **NATIVE Note mode** (passthrough) | idem |
+| Chord (95) | **NATIVE chord engine** (real multi-note chords + 16 user chord slots) | idem |
+| Custom (96) | **NATIVE Custom Modes** layout `(3,0,0)` (passthrough) | idem |
+| Sequencer (97) | **NATIVE hardware sequencer** (Steps `(7,0,0)`) | idem |
+| Scene slot 0 | — (scene launch) | **toggle track pin** (not in chord mode — its slot 0 = capture); Session button turns blue while pinned |
 | Arrows (80/70 ↑↓, 91/92 ←→) | session navigation | same roles as Mini (velocity/pitch/nudge/pages) |
 
 Drum variants (drum_64 / drum_4_track) have no delete/duplicate action layer → Clear/Duplicate LEDs go dark there (availability follows `hasattr(target, "set_action_modifier")` / `"quantize_selected"` in `_update_modifier_leds`). Their scene slots are configured like the main drum's: capture/quantize/shift → `None` (dedicated buttons), cycle slot 6 kept. Chord keeps its Mini scene-slot layout.
