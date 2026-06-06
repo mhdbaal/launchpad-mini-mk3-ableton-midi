@@ -577,12 +577,12 @@ class Launchpad_Pro_MK3(NovationBase):
 
     @listens("value")
     def __on_custom_mode_button_value(self, value):
-        """Custom (96): generic native passthrough. The device's own
-        Note/Chord/Custom/Sequencer buttons all work natively — this is
-        the doorway to the hardware step sequencer. Opens on the native
-        Note layout; press Session ON THE DEVICE to come back."""
+        """Custom (96): native SEQUENCER passthrough — lands straight on
+        the hardware sequencer's Steps layout. Once native, the device's
+        own Note/Chord/Custom/Sequencer buttons all work too. Press
+        Session ON THE DEVICE to come back."""
         if value:
-            self._enter_native_passthrough(ids.NOTE_LAYOUT_BYTES)
+            self._enter_native_passthrough(ids.SEQUENCER_STEPS_LAYOUT_BYTES)
 
     @listens("value")
     def __on_sequencer_mode_button_value(self, value):
