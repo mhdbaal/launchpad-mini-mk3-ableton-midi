@@ -35,6 +35,7 @@ from novation.session_modes import SessionModesComponent
 from .channel_strip_with_arm_toggle import ChannelStripComponentWithArmToggle
 from .clip_copy_component import ClipCopyComponent
 from .chord_pad_mode import ChordPadComponent
+from novation.configurable_playable import ConfigurablePlayableComponent
 from . import sysex_ids as ids
 from .device_profile import (
     CHORD_BUTTON_CC,
@@ -133,15 +134,32 @@ _DRUM_MODES = ("drum_sequence", "drum_64_sequence", "drum_4_track_sequence")
 MODE_PICKER_MODE = "mode_picker"
 # Native passthrough: the script steps aside (Programmer mode off, DAW
 # mode on) so the device's own Note/Chord/Custom/Sequencer engines run —
-# REAL multi-note chords and the hardware step sequencer, with the played
-# notes flowing into Live through port 1 (which doubles as track input).
-# All our components are disabled, so the grid elements are released and
-# nothing intercepts the notes. Return path: the user presses Session ON
-# THE DEVICE — we detect the session-layout switch via the layout enquiry
-# poll below (the device's notifications go to the DAW port we're not
-# bound to, so we ask instead). Manual fallback: the device's Setup page.
+# REAL multi-note chords and the hardware step sequencer. All our
+# components are disabled so the clip_launch_matrix (ch 0) grid elements
+# are released, but that alone does NOT get the played notes into Live:
+# our script's input port is claimed exclusively (SCRIPT capability in
+# pro/__init__.py), so any note arriving there with no installed
+# forwarding is simply dropped, never reaching a track — releasing a
+# component does not hand the port back to Live's normal MIDI routing.
+# The actual delivery path is `_create_native_note_passthrough` below:
+# always-on ConfigurablePlayableComponents on `scale_pads` (ch 15) /
+# `drum_pads` (ch 8) — the fixed channels the firmware's own Note/Chord/
+# Drum-Rack engines use for musical note output, completely disjoint
+# from clip_launch_matrix, so they need no mode-gating at all and ride
+# alongside every one of our own grid-takeover modes for free. Return
+# path: the user presses Session ON THE DEVICE — we detect the
+# session-layout switch via the layout enquiry poll below (the device's
+# notifications go to the DAW port we're not bound to, so we ask
+# instead). Manual fallback: the device's Setup page.
 NATIVE_PASSTHROUGH_MODE = "native_passthrough"
 PASSTHROUGH_POLL_INTERVAL = 0.8
+# Fixed firmware channels for the native Note/Chord/Drum-Rack engines'
+# musical note output (see `_create_native_note_passthrough`). Disjoint
+# from clip_launch_matrix (ch 0), AUDITION_CHANNEL (1) and
+# PROGRAMMER_LED_CHANNEL (0) — no collision with anything else this
+# script maps.
+NATIVE_SCALE_CHANNEL = 15
+NATIVE_DRUM_CHANNEL = 8
 
 
 class Launchpad_Pro_MK3(NovationBase):
@@ -221,6 +239,7 @@ class Launchpad_Pro_MK3(NovationBase):
         self._create_melodic_sequencer()
         self._create_chord_pad_mode()
         self._create_mode_picker()
+        self._create_native_note_passthrough()
         self._create_main_modes()
         self._Launchpad_Pro_MK3__on_selected_track_changed.subject = self.song.view
         self._Launchpad_Pro_MK3__on_session_mode_button_value.subject = self._elements.session_mode_button
@@ -419,6 +438,33 @@ class Launchpad_Pro_MK3(NovationBase):
           event_bus=self._event_bus,
           layer=Layer(grid_matrix="clip_launch_matrix"))
         self._chord_pad_mode.set_control_buttons(self._elements.scene_launch_buttons_raw)
+
+    def _create_native_note_passthrough(self):
+        """The actual delivery mechanism native passthrough depends on
+        (see the NATIVE_PASSTHROUGH_MODE comment above and CLAUDE.md
+        "Native passthrough"). `scale_pads` (ch 15, notes 0-127) and
+        `drum_pads` (ch 8, GM drum-rack notes) are the fixed channels the
+        firmware's own Note/Chord/Drum-Rack engines use for real musical
+        note output — completely disjoint from clip_launch_matrix (ch 0),
+        so these stay enabled through every main mode, unconditionally,
+        exactly like the factory script's own scale_pads/drum_pads
+        translators. ConfigurablePlayableComponent defaults its matrix to
+        PlayableControl.Mode.playable (ScriptForwarding.none) when
+        nothing is held — the note is never claimed by this script at
+        all, so it flows straight to whatever track is armed instead of
+        being swallowed by our SCRIPT-owned input port."""
+        self._native_scale_pads = ConfigurablePlayableComponent(
+            NATIVE_SCALE_CHANNEL,
+            name="Native_Scale_Passthrough",
+            is_enabled=False,
+            layer=Layer(matrix="scale_pads"))
+        self._native_scale_pads.set_enabled(True)
+        self._native_drum_pads = ConfigurablePlayableComponent(
+            NATIVE_DRUM_CHANNEL,
+            name="Native_Drum_Passthrough",
+            is_enabled=False,
+            layer=Layer(matrix="drum_pads"))
+        self._native_drum_pads.set_enabled(True)
 
     def _create_mode_picker(self):
         """Shift+Session → grid overlay panel with one zone per custom
@@ -659,11 +705,13 @@ class Launchpad_Pro_MK3(NovationBase):
     # ---- native passthrough (hardware chord engine / step sequencer) ----
 
     def _enter_native_passthrough(self, layout_bytes):
-        """Step aside and hand the device to its own firmware. The mode
-        change first releases every grid element (components disabled), so
-        the native engines' notes pass through port 1 into Live tracks;
-        then Programmer mode is dropped and the requested native layout is
-        selected. The enquiry poll watches for the user pressing Session
+        """Step aside and hand the device to its own firmware: the mode
+        change releases our own grid elements (clip_launch_matrix, ch 0),
+        Programmer mode is dropped and the requested native layout is
+        selected. Note delivery itself does NOT depend on any of that —
+        it's the always-on scale_pads/drum_pads translators
+        (_create_native_note_passthrough) riding their own fixed
+        channels. The enquiry poll watches for the user pressing Session
         on the device to reclaim."""
         if self._native_passthrough_active:
             return

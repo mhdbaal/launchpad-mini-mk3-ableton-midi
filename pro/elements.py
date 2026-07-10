@@ -7,6 +7,13 @@
 # *_with_shift ComboElements — shift combos are handled in the wiring
 # (direct value listeners checking shift_button.is_pressed()), matching
 # how this codebase wires the sequencer control buttons.
+#
+# `_create_scale_pads()` (128 notes, ch 15) is enabled on top of the
+# inherited `_create_drum_pads()` (GM drum-rack notes, ch 8) — both ride
+# fixed channels the firmware uses for its own Note/Chord/Drum-Rack
+# engines' musical output, independent of `clip_launch_matrix` (ch 0).
+# See `launchpad_pro_mk3.py::_create_native_note_passthrough` and
+# CLAUDE.md "Native passthrough" for why these exist.
 from __future__ import absolute_import, print_function, unicode_literals
 from ableton.v2.base import depends
 from ableton.v2.control_surface.elements import ButtonMatrixElement
@@ -29,6 +36,7 @@ class Elements(LaunchpadElements):
                 profile.RIGHT_BUTTON_CC),
             session_mode_button_identifier=profile.SESSION_BUTTON_CC, **k)
         self._create_drum_pads()
+        self._create_scale_pads()
         self._create_scale_feedback_switch()
         # Left column modifiers + transport.
         self.shift_button = create_button(profile.SHIFT_BUTTON_CC, "Shift_Button")
