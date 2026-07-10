@@ -1,1 +1,5 @@
 midi-remote-scripts/*
+__pycache__/
+*.pyc
+# Exception : les backups des scripts factory (.pyc d'origine) DOIVENT être versionnés
+!factory-backup/**/*.pyc

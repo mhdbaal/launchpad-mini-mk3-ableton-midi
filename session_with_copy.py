@@ -18,6 +18,8 @@ class SceneComponentWithCopy(SceneComponent):
         super(SceneComponentWithCopy, self).__init__(*a, **k)
         self._copy_shift_button = None
         self._scene_copy_handler = None
+        self._edit_mode = None
+        self._user_mode_button = None
 
     def set_copy_shift_button(self, button):
         """Set the shift button reference."""
@@ -27,19 +29,47 @@ class SceneComponentWithCopy(SceneComponent):
         """Set the SceneCopyComponent instance."""
         self._scene_copy_handler = handler
 
+    def set_edit_mode_component(self, edit_mode):
+        """Set the EditModeComponent. Mirrors the clip-slot setter — when
+        edit mode is active, scene presses route to the edit-mode
+        handler (delete/duplicate). Move-on-scene is a no-op in v1."""
+        self._edit_mode = edit_mode
+
+    def set_user_mode_button(self, button):
+        """Set the user_mode_button reference. While the button is held,
+        scene presses are owned by the main-mode selector — swallow them
+        here so a tap on scene 0 doesn't also launch scene 0."""
+        self._user_mode_button = button
+
     def _on_launch_button_pressed(self):
-        """
-        Override to intercept scene button clicks when shift is held.
-        If shift is held, trigger scene copy-paste instead of launch.
-        """
+        """Priority: user-held mode selector → edit mode → copy_shift →
+        normal launch. Mirrors ClipSlotComponentWithCopy._on_launch_button_pressed."""
+        if is_button_pressed(self._user_mode_button):
+            return
+
+        if self._edit_mode is not None and self._edit_mode.is_active():
+            self._edit_mode.handle_scene_action(self._scene)
+            return
+
         if is_button_pressed(self._copy_shift_button):
-            # Shift mode - handle scene copy/paste
             if self._scene_copy_handler is not None:
                 self._scene_copy_handler.handle_scene_action(self._scene)
-            return  # Don't call super - prevent scene launch
+            return
 
-        # No shift - normal behavior (launches scene)
         super(SceneComponentWithCopy, self)._on_launch_button_pressed()
+
+    def _on_launch_button_released(self):
+        """The base SceneComponent fires `_do_launch_scene(False)` on
+        release too — so even when we swallow the press, the release
+        still launches the scene. Mirror the same guards here so a
+        scene tap during User-held / edit-mode / copy is truly a no-op."""
+        if is_button_pressed(self._user_mode_button):
+            return
+        if self._edit_mode is not None and self._edit_mode.is_active():
+            return
+        if is_button_pressed(self._copy_shift_button):
+            return
+        super(SceneComponentWithCopy, self)._on_launch_button_released()
 
 
 class SessionComponentWithCopy(SessionComponent):
@@ -52,6 +82,8 @@ class SessionComponentWithCopy(SessionComponent):
     def __init__(self, *a, **k):
         self._copy_handler = None
         self._scene_copy_handler = None
+        self._edit_mode = None
+        self._user_mode_button = None
         super(SessionComponentWithCopy, self).__init__(*a, **k)
 
     def set_copy_handler(self, copy_handler):
@@ -75,6 +107,27 @@ class SessionComponentWithCopy(SessionComponent):
             for scene in self._scenes:
                 if hasattr(scene, 'set_copy_shift_button'):
                     scene.set_copy_shift_button(self._copy_shift_button)
+
+    def set_edit_mode_component(self, edit_mode):
+        """Set the EditModeComponent and propagate to every existing
+        clip slot and scene. New scenes / clip slots created later pick
+        it up via `_create_scene`."""
+        self._edit_mode = edit_mode
+        for scene in self._scenes:
+            if hasattr(scene, 'set_edit_mode_component'):
+                scene.set_edit_mode_component(edit_mode)
+            for clip_slot in scene._clip_slots:
+                if hasattr(clip_slot, 'set_edit_mode_component'):
+                    clip_slot.set_edit_mode_component(edit_mode)
+
+    def set_user_mode_button(self, button):
+        """Set the user_mode_button reference and propagate to every
+        existing scene so scene-launch presses can short-circuit while
+        the button is held (mode selector takes priority)."""
+        self._user_mode_button = button
+        for scene in self._scenes:
+            if hasattr(scene, 'set_user_mode_button'):
+                scene.set_user_mode_button(button)
 
     def set_modifier_button(self, button, name, clip_slots_only=False):
         """Store shift button and propagate to scenes."""
@@ -107,5 +160,18 @@ class SessionComponentWithCopy(SessionComponent):
         if hasattr(self, '_copy_shift_button'):
             if hasattr(scene, 'set_copy_shift_button'):
                 scene.set_copy_shift_button(self._copy_shift_button)
+
+        # Propagate edit-mode component to new scene + its clip slots
+        if self._edit_mode is not None:
+            if hasattr(scene, 'set_edit_mode_component'):
+                scene.set_edit_mode_component(self._edit_mode)
+            for clip_slot in scene._clip_slots:
+                if hasattr(clip_slot, 'set_edit_mode_component'):
+                    clip_slot.set_edit_mode_component(self._edit_mode)
+
+        # Propagate user_mode_button reference to new scene
+        if self._user_mode_button is not None:
+            if hasattr(scene, 'set_user_mode_button'):
+                scene.set_user_mode_button(self._user_mode_button)
 
         return scene
