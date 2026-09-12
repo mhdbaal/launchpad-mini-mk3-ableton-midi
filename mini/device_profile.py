@@ -58,6 +58,11 @@ RIGHT_BUTTON_CC = 94
 # Launchpads (the firmware speaks the same Programmer-mode color table), so
 # only the choices below are "Mini-MK3-specific" in the sense of "this UI
 # uses these colors" — the indices themselves are portable.
+# Palette rendering only. The RGB colour-spec path is implemented and
+# validated for the Pro MK3; the Mini keeps the 128-index palette until its
+# script moves to its own project.
+SUPPORTS_RGB_LEDS = False
+
 LED_OFF = 0
 LED_SESSION = 21
 LED_SESSION_DIM = 27        # GREEN_HALF — "session button is available, press to switch"

@@ -50,6 +50,7 @@ from .device_profile import (
     LED_DUPLICATE_HELD,
     LED_DUPLICATE_IDLE,
     LED_MODE_IDLE,
+    LED_MODE_SELECTOR_HELD,
     LED_MUTE_ACTIVE,
     LED_MUTE_IDLE,
     LED_OFF,
@@ -112,6 +113,32 @@ _SEQUENCER_MODES = ("drum_sequence", "drum_64_sequence",
 _DRUM_MODES = ("drum_sequence", "drum_64_sequence", "drum_4_track_sequence")
 MODE_PICKER_MODE = "mode_picker"
 
+# Scene-button → main-mode mapping for the hold-Sequencer mode selector.
+# Top down: drum / drum 64 / drum 4-track / melodic / chord. Slots 5-7 stay
+# dark during the hold (nothing to select there).
+_MODE_SELECTOR_SLOTS = {
+    0: "drum_sequence",
+    1: "drum_64_sequence",
+    2: "drum_4_track_sequence",
+    3: "melodic_sequence",
+    4: "chord_mode",
+}
+
+# Per-mode (active, dim) selector colors, resolved through the skin (these
+# scene buttons are ordinary CC elements, so set_light works even in
+# Programmer mode). Every value of _MODE_SELECTOR_SLOTS needs an entry.
+_MODE_SELECTOR_LED_COLORS = {
+    "drum_sequence":         ("Mode.Selector.Drum",       "Mode.Selector.DrumDim"),
+    "drum_64_sequence":      ("Mode.Selector.Drum64",     "Mode.Selector.Drum64Dim"),
+    "drum_4_track_sequence": ("Mode.Selector.Drum4Track", "Mode.Selector.Drum4TrackDim"),
+    "melodic_sequence":      ("Mode.Selector.Melodic",    "Mode.Selector.MelodicDim"),
+    "chord_mode":            ("Mode.Selector.Chord",      "Mode.Selector.ChordDim"),
+}
+
+# Main mode a bare Sequencer tap (press + release, no scene picked) lands on.
+# Keeps the documented one-press entry to the Ableton drum editor.
+_SEQUENCER_TAP_MODE = "drum_sequence"
+
 
 class Launchpad_Pro_MK3(NovationBase):
     model_family_code = DEVICE_FAMILY_CODE
@@ -123,6 +150,10 @@ class Launchpad_Pro_MK3(NovationBase):
     def __init__(self, *a, **k):
         self._picker_return_mode = None
         self._duplicate_consumed = False
+        # Hold-Sequencer mode selector state (see __on_sequencer_mode_button_value).
+        self._selector_held = False
+        self._mode_selected_during_hold = False
+        self._mode_selector_listeners = []
         # Notification plumbing — created early so components can take the
         # bus reference at construction time. _event_bus = None would make
         # every _emit() a no-op (kill switch).
@@ -140,6 +171,9 @@ class Launchpad_Pro_MK3(NovationBase):
         # Drop gestures/translations held before a USB reconnect and repaint
         # the active surface, even if the software mode has not changed.
         self._duplicate_consumed = False
+        self._detach_mode_selector_listeners()
+        self._selector_held = False
+        self._mode_selected_during_hold = False
         self.__on_main_mode_changed(self._main_modes.selected_mode)
         # Paint the static button LEDs — on_identified re-fires on port
         # reconnection, so this doubles as the LED recovery path.
@@ -149,6 +183,8 @@ class Launchpad_Pro_MK3(NovationBase):
         self._clear_inert_button_leds()
 
     def disconnect(self):
+        self._detach_mode_selector_listeners()
+        self._selector_held = False
         try:
             if self._notification_dispatcher is not None:
                 self._notification_dispatcher.disconnect()
@@ -198,8 +234,17 @@ class Launchpad_Pro_MK3(NovationBase):
         self._Launchpad_Pro_MK3__on_mute_button_value.subject = self._elements.mute_button
         self._Launchpad_Pro_MK3__on_solo_button_value.subject = self._elements.solo_button
         self._Launchpad_Pro_MK3__on_stop_clip_button_value.subject = self._elements.stop_clip_button
-        # NOTE: set_user_mode_button is never called — the Pro has no User
-        # hold-to-select; the components' None-safe gates stay inactive.
+        # Hold-to-select lives on the Sequencer button here (the Mini uses
+        # User). Every scene-press consumer checks is_pressed() on this
+        # button and returns early, so a scene tap during the hold picks a
+        # mode instead of launching a scene / firing a sequencer slot.
+        selector = self._elements.sequencer_mode_button
+        self._session.set_user_mode_button(selector)
+        self._drum_step_sequencer.set_user_mode_button(selector)
+        self._drum_64_step_sequencer.set_user_mode_button(selector)
+        self._drum_4_track_step_sequencer.set_user_mode_button(selector)
+        self._melodic_step_sequencer.set_user_mode_button(selector)
+        self._chord_pad_mode.set_user_mode_button(selector)
 
     def _create_session_layer(self):
         return super(Launchpad_Pro_MK3, self)._create_session_layer() + Layer(scene_launch_buttons="scene_launch_buttons")
@@ -507,10 +552,122 @@ class Launchpad_Pro_MK3(NovationBase):
 
     @listens("value")
     def __on_sequencer_mode_button_value(self, value):
-        """Sequencer always selects the Ableton drum editor, including with Shift."""
+        """Sequencer = hold-to-show mode selector, tap = drum editor.
+
+        Press: render the five sequencer/chord modes on
+        scene_launch_buttons_raw slots 0..4 (active = bright, others = half)
+        and attach direct value listeners so a scene tap switches mode.
+        Tapping the currently-active mode bounces back to session. Slots 5-7
+        stay dark.
+
+        Release: detach the temporary listeners, hand the scene LEDs back to
+        whichever component owns them, and — if no mode was picked during the
+        hold — land on the drum editor, preserving the documented one-press
+        entry. Shift changes nothing here; the selector shows either way.
+        """
         if value:
+            self._enter_mode_selector()
+        else:
+            self._exit_mode_selector()
+
+    def _enter_mode_selector(self):
+        if self._selector_held:
+            # Idempotent: a stray repeat press must not double-attach
+            # listeners or re-render mid-gesture.
+            return
+        self._selector_held = True
+        self._mode_selected_during_hold = False
+        self._send_programmer_cc(SEQUENCER_BUTTON_CC, LED_MODE_SELECTOR_HELD)
+        self._render_mode_selector()
+        # Attach on top of the existing framework / sequencer listeners —
+        # those check the Sequencer button's pressed state and skip while
+        # held, so nothing has to be unbound.
+        self._mode_selector_listeners = []
+        for slot in _MODE_SELECTOR_SLOTS:
+            button = self._elements.scene_launch_buttons_raw[slot]
+            listener = self._make_mode_selector_listener(slot)
+            button.add_value_listener(listener)
+            self._mode_selector_listeners.append((button, listener))
+
+    def _exit_mode_selector(self):
+        if not self._selector_held:
+            return
+        self._selector_held = False
+        self._detach_mode_selector_listeners()
+        if not self._mode_selected_during_hold:
+            # Bare tap: keep the historical one-press entry to the drum editor.
             self._picker_return_mode = None
-            self._main_modes.selected_mode = "drum_sequence"
+            if self._main_modes.selected_mode != _SEQUENCER_TAP_MODE:
+                self._main_modes.selected_mode = _SEQUENCER_TAP_MODE
+        self._mode_selected_during_hold = False
+        # __on_main_mode_changed repaints on an actual mode switch; this call
+        # covers the no-change case (released on the mode we were already in).
+        self._set_mode_button_lights(self._main_modes.selected_mode)
+        self._restore_scene_leds()
+
+    def _detach_mode_selector_listeners(self):
+        for button, listener in self._mode_selector_listeners:
+            try:
+                button.remove_value_listener(listener)
+            except Exception:
+                pass
+        self._mode_selector_listeners = []
+
+    def _make_mode_selector_listener(self, slot):
+        target_mode = _MODE_SELECTOR_SLOTS[slot]
+
+        def listener(value):
+            if not value or not self._selector_held:
+                return
+            self._mode_selected_during_hold = True
+            self._picker_return_mode = None
+            current = self._main_modes.selected_mode
+            # Tap the active mode → bounce back to session; tap any other
+            # mode → switch to it. Re-render so the highlight follows.
+            self._main_modes.selected_mode = (
+                "session" if current == target_mode else target_mode)
+            self._render_mode_selector()
+
+        return listener
+
+    def _render_mode_selector(self):
+        current = self._main_modes.selected_mode
+        for slot in range(len(self._elements.scene_launch_buttons_raw)):
+            mode = _MODE_SELECTOR_SLOTS.get(slot)
+            if mode is None:
+                color = "DefaultButton.Disabled"
+            else:
+                bright, dim = _MODE_SELECTOR_LED_COLORS[mode]
+                color = bright if mode == current else dim
+            try:
+                self._elements.scene_launch_buttons_raw[slot].set_light(color)
+            except Exception:
+                pass
+
+    def _restore_scene_leds(self):
+        """Hand the scene column back to its owner for the current main mode.
+        Blank every slot first so a selector color can't survive on a slot the
+        active component never paints."""
+        for button in self._elements.scene_launch_buttons_raw:
+            try:
+                button.set_light("DefaultButton.Disabled")
+            except Exception:
+                pass
+        current = self._main_modes.selected_mode
+        if current in _SEQUENCER_MODES:
+            seq = self._sequencer_for_mode(current)
+            if seq is not None:
+                try:
+                    seq._update_control_leds()
+                except Exception:
+                    pass
+        elif current != MODE_PICKER_MODE:
+            # SessionComponent owns the scene LEDs through ButtonControl;
+            # update() re-pushes every scene color through the framework.
+            try:
+                self._session.update()
+            except Exception:
+                pass
 
     def _toggle_mode_picker(self):
         """Shift+Session toggles the software-mode panel without changing firmware."""
@@ -529,6 +686,9 @@ class Launchpad_Pro_MK3(NovationBase):
         keeps its own slot-0 function (capture) — skipped there. Feedback:
         the Session button turns blue while pinned."""
         if not value:
+            return
+        if self._selector_held:
+            # The hold-Sequencer selector owns the scene column right now.
             return
         mode = self._main_modes.selected_mode
         if mode not in _SEQUENCER_MODES or mode == "chord_mode":
@@ -856,9 +1016,12 @@ class Launchpad_Pro_MK3(NovationBase):
             LED_OFF)
         # Reserved buttons stay dark and are consumed by the background.
         self._send_programmer_cc(CUSTOM_BUTTON_CC, LED_OFF)
+        # While the selector is held the Sequencer button stays white — a
+        # mode picked mid-hold must not steal that feedback back.
         self._send_programmer_cc(
             SEQUENCER_BUTTON_CC,
-            LED_SEQUENCER if mode in _DRUM_MODES else LED_MODE_IDLE)
+            LED_MODE_SELECTOR_HELD if self._selector_held
+            else (LED_SEQUENCER if mode in _DRUM_MODES else LED_MODE_IDLE))
         if mode in _SEQUENCER_MODES:
             self._send_programmer_cc(UP_BUTTON_CC, LED_ARROW_OCTAVE)
             self._send_programmer_cc(DOWN_BUTTON_CC, LED_ARROW_OCTAVE)

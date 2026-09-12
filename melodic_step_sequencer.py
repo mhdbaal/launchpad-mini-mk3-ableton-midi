@@ -8,11 +8,20 @@ from ableton.v2.control_surface import Component
 from ableton.v2.control_surface.input_control_element import ScriptForwarding
 
 from .events import Event
+from .device_profile import SUPPORTS_RGB_LEDS
 from .palette import (
+    GREY_BRIGHT,
+    GREY_DIM,
+    GREY_EMPTY,
+    GREY_MID,
     MELODIC_COLOR_VALUES,
+    RGB_BLACK,
+    RGB_WHITE,
     VELOCITY_LEVEL_DIM,
     VELOCITY_LEVEL_PALETTE,
+    rgb_shades,
     send_pad_color,
+    send_pad_rgb,
 )
 from .programmer_mode import (
     AUDITION_CHANNEL,
@@ -40,6 +49,63 @@ PREVIEW_TOGGLE_X = 7
 PREVIEW_TOGGLE_Y = 0
 PITCH_ROW_MIN = 0
 PITCH_ROW_MAX = 7
+
+# Drum-lane mode: when the selected track carries a Drum Rack, the 8 pitch
+# rows stop being a scale and become 8 simultaneous drum lanes — one row per
+# drum pad that actually has a device loaded. Same drum-keyboard convention
+# as the rest of the codebase: the LOWEST pitch sits on the bottom row
+# (y = PITCH_ROW_MAX), the highest on y = 0. Racks with more than 8 used
+# pads are scrolled with the octave arrows (a "bank" = DRUM_LANES pads);
+# the semitone arrows move the window one pad at a time.
+DRUM_LANES = 8
+
+# Lane velocity view: hold a scene button to turn the whole grid into the
+# velocity profile of that row. Columns = the 8 steps of the current page,
+# rows = 8 velocity levels read bottom-up (grid row 7 = level 1). Velocity is
+# `level * LANE_VELOCITY_STEP`, clamped to 127 (level 8 → 127).
+#
+# Why the scene column: the scene button sits physically at the end of its
+# row, so "scene i edits row i" needs no learning. Why 8 levels and not the
+# 16 of the step-hold overlay: there are only 8 rows. The two tools split the
+# work — this one shapes a whole lane at a glance, the step-hold overlay
+# fine-tunes a single note.
+#
+# MINI CAVEAT: scene 7 is the device shift / stop-solo-mute, owned by the top
+# level and untouched by the sequencers, so row 7's lane view is unreachable
+# there (use the step-hold overlay for that row). All 8 work on the Pro, where
+# shift is a dedicated button.
+LANE_VELOCITY_LEVELS = 8
+LANE_VELOCITY_STEP = 16
+
+# Push-style note shading: a note's pad takes the CLIP's colour, and velocity
+# picks one of NOTE_SHADE_LEVELS evenly-spaced shades of that single hue.
+# Everything that is not a note (empty steps, beat markers, playhead, loop,
+# held highlight) deliberately stays OUTSIDE the hue on skin colours, so a
+# lit pad always means "there is a note here".
+#
+# This needs the RGB SysEx path (`palette.send_pad_rgb`) — the firmware
+# palette only carries 4 unevenly-spaced shades per hue. Set RGB_NOTE_SHADES
+# to False to fall back to the old 4-tier skin colours (StepVelGhost/Soft/
+# Medium/Loud) if a device turns out not to accept RGB colour specs.
+# On devices that accept RGB colour specs (Pro MK3 — the Mini overlay sets
+# SUPPORTS_RGB_LEDS False and keeps palette rendering until its script moves
+# to its own project), the WHOLE melodic surface follows one rule set:
+#
+#   clip hue, shaded  = content / chosen value  (note velocity, loop inside,
+#                                                current page, selected grid)
+#   grey              = nothing / available     (empty step, beat marker,
+#                                                unselected option)
+#   white             = "now" / held / anchor   (playhead, held cell, range
+#                                                anchor)
+#
+# Consequence worth stating: a coloured pad ALWAYS means something is there.
+# Nothing structural borrows the hue.
+RGB_NOTE_SHADES = True
+NOTE_SHADE_LEVELS = 8
+# Floor of the shade ramp. Low enough that a ghost note reads as "barely
+# there", high enough that it is still visibly the clip's hue and not black.
+NOTE_SHADE_FLOOR = 0.12
+DEFAULT_CLIP_COLOR = 0x00FF00  # fallback hue when the clip has no usable colour
 MAJOR_SCALE = (0, 2, 4, 5, 7, 9, 11)
 MINOR_SCALE = (0, 2, 3, 5, 7, 8, 10)
 
@@ -168,6 +234,30 @@ class MelodicStepSequencerComponent(Component):
         self._consumed_note_cells = set()
         self._preview_mode = False
         self._pitch_offset = 0
+        # Drum-lane mode (see DRUM_LANES). `_drum_group_device` is the rack on
+        # the selected track, or None for a normal melodic track.
+        # `_drum_lane_offset` indexes the used-pad list for the BOTTOM row.
+        self._drum_group_device = None
+        self._drum_lane_offset = 0
+        # Lane velocity view — index of the held scene button (= grid row), or
+        # None. `_armed` gates on the hold delay so a quick tap still performs
+        # the slot's own action (cycle / capture / quantize) without flashing
+        # the view.
+        self._lane_velocity_scene = None
+        self._lane_velocity_armed = False
+        # Cached shade ramp for the current clip colour, darkest first, and the
+        # colour it was built from (so we only rebuild when the colour moves).
+        # Shade ramps keyed by level count, rebuilt when the clip colour moves.
+        self._shade_ramps = {}
+        self._note_shade_source = None
+        # Open RGB batch: while not None, every RGB write appends here and the
+        # whole refresh goes out as one SysEx instead of ~80 messages.
+        # `_rgb_batch_depth` makes begin/flush re-entrant so an inner pass
+        # (pitch grid, loop row, scene column) joins the outer batch.
+        self._rgb_batch = None
+        self._rgb_batch_depth = 0
+        # Cached result of _scan_used_drum_pads — the LED path reads this.
+        self._used_pads = []
         self._control_buttons = ()
         self._control_button_listeners = []
         # Scene-button slot assignments. Defaults are the Mini MK3 layout
@@ -205,6 +295,10 @@ class MelodicStepSequencerComponent(Component):
         # task is restarted on every press; the release path disarms when
         # the held set empties.
         self._velocity_overlay_armed = False
+        self._lane_velocity_arm_task = self._tasks.add(
+            task.sequence(task.wait(VELOCITY_OVERLAY_HOLD_DELAY),
+                          task.run(self._arm_lane_velocity)))
+        self._lane_velocity_arm_task.kill()
         self._velocity_overlay_arm_task = self._tasks.add(
             task.sequence(task.wait(VELOCITY_OVERLAY_HOLD_DELAY),
                           task.run(self._arm_velocity_overlay)))
@@ -217,6 +311,10 @@ class MelodicStepSequencerComponent(Component):
         self.set_control_buttons(None)
         self.set_grid_matrix(None)
         self._set_clip(None)
+        # Drop the rack subscription before teardown.
+        self._on_selected_drum_pad_changed.subject = None
+        self._drum_group_device = None
+        self._used_pads = []
         super(MelodicStepSequencerComponent, self).disconnect()
 
     def set_control_buttons(self, buttons):
@@ -252,7 +350,7 @@ class MelodicStepSequencerComponent(Component):
         if enabled:
             self._led_debug_count = 0
             self._clear_audition_translations()
-            self._refresh_clip()
+            self._refresh_targets()
             self._delayed_update_task.restart()
             self._update_control_leds()
         else:
@@ -262,6 +360,7 @@ class MelodicStepSequencerComponent(Component):
             self._held_note_cells = {}
             self._consumed_note_cells = set()
             self._disarm_velocity_overlay()
+            self._disarm_lane_velocity()
             self._preview_mode = False
             # Leaving sequencer mode ends "build-out": the next session treats
             # the clip's loop as sacred again.
@@ -272,20 +371,45 @@ class MelodicStepSequencerComponent(Component):
 
     def update(self):
         super(MelodicStepSequencerComponent, self).update()
-        if self.is_enabled():
+        if not self.is_enabled():
+            return
+        # One batch around the three passes: a full refresh is a single SysEx.
+        self._begin_rgb_batch()
+        try:
             self._update_pitch_leds()
             self._update_loop_leds()
             self._update_control_leds()
+        finally:
+            self._flush_rgb_batch()
 
     @listens("detail_clip")
     def _on_detail_clip_changed(self):
         if self.is_enabled():
-            self._refresh_clip()
+            # The clip may have moved to another track — re-resolve the rack
+            # too, not just the clip.
+            self._refresh_targets()
 
     @listens("selected_track")
     def _on_selected_track_changed(self):
         if self.is_enabled():
-            self._refresh_clip()
+            self._refresh_targets()
+
+    @listens("selected_drum_pad")
+    def _on_selected_drum_pad_changed(self):
+        """Live's rack selection moved. Repaint the lane anchor, and take the
+        opportunity to refresh the used-pad cache — loading a sound into an
+        empty pad usually goes through selecting it."""
+        if self.is_enabled():
+            self._rescan_drum_pads()
+            self.update()
+
+    @listens("color")
+    def _on_clip_color_changed(self):
+        """Recolouring a clip in Live restyles the whole sequencer."""
+        self._shade_ramps = {}
+        self._note_shade_source = None
+        if self.is_enabled():
+            self.update()
 
     @listens("can_capture_midi")
     def _on_can_capture_midi_changed(self):
@@ -325,7 +449,167 @@ class MelodicStepSequencerComponent(Component):
     def _on_loop_end_changed(self):
         self._on_loop_changed()
 
-    def _refresh_clip(self):
+    # --- Drum-lane detection -------------------------------------------
+
+    def _target_track(self):
+        """Track whose rack drives the lanes.
+
+        The clip comes from `song.view.detail_clip`, which does NOT have to
+        live on `song.view.selected_track` — Live keeps the detail clip open
+        when you select another track. Resolving the rack from the selected
+        track while editing someone else's clip is how the sequencer ended up
+        writing scale pitches (C/D/F) into a drum clip. Follow the clip first,
+        fall back to the selected track when there is no clip yet."""
+        clip = self._clip
+        if liveobj_valid(clip):
+            try:
+                # clip → clip slot → track
+                slot = clip.canonical_parent
+                track = slot.canonical_parent if slot is not None else None
+                if liveobj_valid(track):
+                    return track
+            except Exception:
+                pass
+        return self.song.view.selected_track
+
+    def _refresh_targets(self):
+        """Resolve the Drum Rack for the target track, then the clip.
+
+        Called wherever the selected track, the detail clip, or the rack's
+        contents can have changed. Switching racks resets the lane window —
+        pad indices from the previous rack mean nothing in the new one."""
+        was_drum = self._drum_lane_mode()
+        self._resolve_clip()
+        track = self._target_track()
+        drum_group = self._find_drum_group_device(track)
+        self._log("target track: {}, drum group: {}".format(
+            getattr(track, "name", "<none>"),
+            getattr(drum_group, "name", "<none>")))
+        if drum_group != self._drum_group_device:
+            self._drum_group_device = drum_group
+            self._on_selected_drum_pad_changed.subject = (
+                drum_group.view if liveobj_valid(drum_group) else None)
+            self._drum_lane_offset = 0
+            # Row → pitch just changed meaning; drop in-flight cell state so a
+            # release can't write a note on a lane that no longer exists.
+            self._held_grid_buttons = set()
+            self._held_note_cells = {}
+            self._consumed_note_cells = set()
+        self._rescan_drum_pads()
+        self._log("drum lanes: {} used pad(s)".format(len(self._used_pads)))
+        is_drum = self._drum_lane_mode()
+        if is_drum != was_drum:
+            self._emit(Event.MELODIC_DRUM_MODE,
+                       active=is_drum,
+                       count=len(self._used_pads))
+            if self._preview_mode:
+                self._update_audition_translations()
+        self.update()
+
+    def _find_drum_group_device(self, track):
+        if not liveobj_valid(track):
+            return None
+        for device in track.devices:
+            drum_group = self._find_drum_group_device_in_device(device)
+            if liveobj_valid(drum_group):
+                return drum_group
+        return None
+
+    def _find_drum_group_device_in_device(self, device):
+        if not liveobj_valid(device):
+            return None
+        if getattr(device, "can_have_drum_pads", False):
+            return device
+        if getattr(device, "can_have_chains", False):
+            for chain in device.chains:
+                for nested_device in chain.devices:
+                    nested = self._find_drum_group_device_in_device(nested_device)
+                    if liveobj_valid(nested):
+                        return nested
+        return None
+
+    def _scan_used_drum_pads(self):
+        """Drum pads that actually have a device loaded, lowest pitch first.
+        This is the whole point of the mode: rows map to *used* pads, so an
+        808 kit with 9 sounds fills 8 rows instead of scattering them across
+        a chromatic keyboard.
+
+        Walks all 128 rack pads — call it from `_rescan_drum_pads`, never from
+        the LED path (`_update_pitch_leds` resolves a pitch per row and a
+        color per cell, so a scan per call would be ~10k iterations on every
+        playhead tick)."""
+        if not liveobj_valid(self._drum_group_device):
+            return []
+        used = []
+        for pad in self._drum_group_device.drum_pads:
+            if liveobj_valid(pad) and getattr(pad, "chains", None):
+                if len(pad.chains) > 0:
+                    used.append(pad)
+        used.sort(key=lambda p: p.note)
+        return used
+
+    def _rescan_drum_pads(self):
+        """Refresh the used-pad cache. Cheap enough to call on any event that
+        can change the rack's contents (track change, clip change, pad
+        selection, mode enable); everything else reads the cache."""
+        self._used_pads = self._scan_used_drum_pads()
+
+    def _used_drum_pads(self):
+        """Cached view of the rack — see `_rescan_drum_pads`."""
+        return self._used_pads
+
+    def _drum_lane_mode(self):
+        return liveobj_valid(self._drum_group_device) and bool(self._used_pads)
+
+    def _visible_drum_pads(self):
+        """Up to DRUM_LANES pads for the current window. Index 0 = bottom row
+        (y = PITCH_ROW_MAX). Shorter than DRUM_LANES when the rack has fewer
+        used pads than rows — the extra rows render dead."""
+        used = self._used_drum_pads()
+        start = self._clamped_lane_offset(len(used))
+        return used[start:start + DRUM_LANES]
+
+    def _clamped_lane_offset(self, total=None):
+        if total is None:
+            total = len(self._used_drum_pads())
+        return max(0, min(self._drum_lane_offset, max(0, total - DRUM_LANES)))
+
+    def _selected_drum_pad_note(self):
+        """Note of the pad Live currently has selected in the rack, or None.
+        Used as the lane anchor (renders in the Root color)."""
+        if not liveobj_valid(self._drum_group_device):
+            return None
+        try:
+            pad = self._drum_group_device.view.selected_drum_pad
+        except Exception:
+            return None
+        return pad.note if liveobj_valid(pad) else None
+
+    def _scroll_drum_lanes(self, delta):
+        total = len(self._used_drum_pads())
+        current = self._clamped_lane_offset(total)
+        limit = max(0, total - DRUM_LANES)
+        target = max(0, min(current + delta, limit))
+        if target == current:
+            return
+        self._drum_lane_offset = target
+        # The window moved: cells now mean different pitches.
+        self._held_grid_buttons = set()
+        self._held_note_cells = {}
+        self._consumed_note_cells = set()
+        if self._preview_mode:
+            self._update_audition_translations()
+        visible = self._visible_drum_pads()
+        self._emit(Event.MELODIC_DRUM_LANES,
+                   first=(target + 1),
+                   last=(target + len(visible)),
+                   total=total)
+        self.update()
+
+    def _resolve_clip(self):
+        """Clip resolution without the repaint — `_refresh_targets` needs the
+        clip settled before it can work out which track's rack to read, and
+        painting in between would render one frame from a stale lane cache."""
         clip_slot = self._selected_clip_slot()
         clip = None
         detail_clip = self.song.view.detail_clip
@@ -335,6 +619,9 @@ class MelodicStepSequencerComponent(Component):
             clip = clip_slot.clip
         self._clip_slot = clip_slot
         self._set_clip(clip)
+
+    def _refresh_clip(self):
+        self._resolve_clip()
         self.update()
 
     def _set_clip(self, clip):
@@ -345,6 +632,10 @@ class MelodicStepSequencerComponent(Component):
             self._on_playing_status_changed.subject = clip
             self._on_loop_changed.subject = clip
             self._on_loop_end_changed.subject = clip
+            self._on_clip_color_changed.subject = clip
+            # A new clip means a new hue — drop the cached shade ramp.
+            self._shade_ramps = {}
+            self._note_shade_source = None
             # Different clip — drop "just created" state. _ensure_clip's
             # create path re-sets it after this call when relevant.
             self._clip_just_created = False
@@ -404,6 +695,12 @@ class MelodicStepSequencerComponent(Component):
     def _on_grid_matrix_value(self, value, x, y, is_momentary):
         if not self.is_enabled():
             return
+        # Lane velocity view owns the whole grid while a scene is held. Press
+        # sets the velocity; release is a no-op (the bar must not ghost-toggle).
+        if self._lane_velocity_active():
+            if value:
+                self._handle_lane_velocity_press(x, y)
+            return
         if y == PREVIEW_TOGGLE_Y and self._device_shift_held:
             # Top row in shift-active state = page selector + preview toggle.
             if x == PREVIEW_TOGGLE_X:
@@ -449,6 +746,11 @@ class MelodicStepSequencerComponent(Component):
         # via hold" gesture used by clip actions (Quantize) — but we don't
         # toggle a note in preview mode (the pad is for playing, not editing).
         pitch = self._pitch_for_row(y)
+        if pitch is None:
+            # Drum-lane mode, row past the end of the rack — dead cell.
+            # Bail on both edges: a dead row is never tracked on press, so
+            # there is nothing for a release to undo either.
+            return
         step = self._page_index * STEPS_PER_PAGE + x
         if not value:
             # Release. Ignore if we never recorded the press (stray edge).
@@ -494,6 +796,15 @@ class MelodicStepSequencerComponent(Component):
         in 'grid' mode. Currently-selected cell is bright (WHITE). Binary
         cells (0..7) = ORANGE_HALF. Ternary cells (8..15) = PURPLE to flag
         them at a glance."""
+        if self._rgb_leds():
+            if not 0 <= index < len(GRID_OPTIONS):
+                return RGB_BLACK
+            if index == self._grid_option_index:
+                return self._shade(NOTE_SHADE_LEVELS)
+            # Ternary options sit one grey brighter than binary ones — the
+            # hue is reserved for the chosen value, so the binary/ternary
+            # distinction moves onto the grey ramp.
+            return GREY_MID if index >= TERNARY_FIRST_INDEX else GREY_DIM
         if not 0 <= index < len(GRID_OPTIONS):
             return "DefaultButton.Disabled"
         if index == self._grid_option_index:
@@ -655,6 +966,15 @@ class MelodicStepSequencerComponent(Component):
         self._clip.end_marker = end
 
     def _pitch_for_row(self, y):
+        # Drum-lane mode wins over both scale modes: one row per used drum
+        # pad, lowest at the bottom. Returns None for rows past the end of
+        # the rack — callers render those dead and ignore presses.
+        if self._drum_lane_mode():
+            pads = self._visible_drum_pads()
+            index = PITCH_ROW_MAX - y
+            if 0 <= index < len(pads):
+                return pads[index].note
+            return None
         # Two modes:
         #   - scale (default): 8 rows = 1 octave of the current scale.
         #     `degree = PITCH_ROW_MAX - y` puts the root at y=7 (degree 0) and
@@ -681,8 +1001,17 @@ class MelodicStepSequencerComponent(Component):
         return BASE_PITCH + int(root_note) + self._pitch_offset
 
     def _update_pitch_leds(self):
+        """Repaint the grid. The whole pass rides in one RGB batch so a full
+        refresh costs a single SysEx instead of 64 Note On messages."""
         if self._grid_matrix is None:
             return
+        self._begin_rgb_batch()
+        try:
+            self._paint_pitch_leds()
+        finally:
+            self._flush_rgb_batch()
+
+    def _paint_pitch_leds(self):
         # When shift is held: row 0 is the page selector (owned by
         # _update_loop_leds), and rows 1..7 become a step range picker
         # backdrop — each column lit Inside/Outside per the clip loop in the
@@ -691,6 +1020,9 @@ class MelodicStepSequencerComponent(Component):
         # When shift is NOT held: every row 0..7 is a pitch row, except that
         # the bottom-right 4x4 may be overridden when the slot 6 cycle is in
         # "grid" mode (each of those cells displays a grid-resolution option).
+        if self._lane_velocity_active():
+            self._render_lane_velocity()
+            return
         if self._device_shift_held:
             for y in range(PITCH_ROW_MIN + 1, PITCH_ROW_MAX + 1):
                 for x in range(8):
@@ -706,6 +1038,11 @@ class MelodicStepSequencerComponent(Component):
                     VELOCITY_OVERLAY_ROW_TOP, VELOCITY_OVERLAY_ROW_BOTTOM):
                 continue
             pitch = self._pitch_for_row(y)
+            if pitch is None:
+                dead = RGB_BLACK if self._rgb_leds() else "DefaultButton.Disabled"
+                for x in range(8):
+                    self._set_grid_light(x, y, dead)
+                continue
             for x in range(8):
                 if grid_mode and y >= 4 and x >= 4:
                     index = (y - 4) * 4 + (x - 4)
@@ -717,6 +1054,8 @@ class MelodicStepSequencerComponent(Component):
             self._render_velocity_overlay()
 
     def _step_loop_color(self, step):
+        if self._rgb_leds():
+            return self._step_loop_rgb(step)
         if not liveobj_valid(self._clip) and not self._selected_track_can_hold_midi():
             return "MelodicSequencer.NoClip"
         if step in self._step_loop_press_points:
@@ -730,11 +1069,34 @@ class MelodicStepSequencerComponent(Component):
                 return "MelodicSequencer.Loop.Inside"
         return "MelodicSequencer.Loop.Outside"
 
+    def _step_loop_rgb(self, step):
+        if not liveobj_valid(self._clip) and not self._selected_track_can_hold_midi():
+            return GREY_EMPTY
+        if step in self._step_loop_press_points:
+            return RGB_WHITE
+        abs_step = self._page_index * STEPS_PER_PAGE + step
+        if self._playhead_is_on_step(abs_step):
+            return RGB_WHITE
+        if liveobj_valid(self._clip):
+            time = abs_step * self._step_length
+            if self._clip.loop_start <= time < self._clip.loop_end:
+                # Mid shade: the loop is content, but it must not compete with
+                # the notes drawn on top of it in the normal view.
+                return self._shade(3)
+        return GREY_EMPTY
+
     def _pitch_color(self, step, pitch, x):
+        if self._rgb_leds():
+            return self._pitch_rgb(step, pitch, x)
         if not liveobj_valid(self._clip) and not self._selected_track_can_hold_midi():
             return "MelodicSequencer.NoClip"
         color = "MelodicSequencer.StepBeat" if x == 0 or x == 4 else "MelodicSequencer.StepEmpty"
-        if pitch % 12 == self._root_pitch() % 12:
+        if self._drum_lane_mode():
+            # No scale root here — anchor on the pad Live has selected in the
+            # rack, so the user can tell which lane is which at a glance.
+            if pitch == self._selected_drum_pad_note():
+                color = "MelodicSequencer.Root"
+        elif pitch % 12 == self._root_pitch() % 12:
             color = "MelodicSequencer.Root"
         note = self._find_note_at_step_pitch(step, pitch)
         if note is not None:
@@ -745,6 +1107,25 @@ class MelodicStepSequencerComponent(Component):
         if self._playhead_is_on_step(step):
             color = "MelodicSequencer.PlayheadActive" if note is not None else "MelodicSequencer.Playhead"
         return color
+
+    def _pitch_rgb(self, step, pitch, x):
+        """Step-grid cell under the hue/grey/white rule set. Precedence, most
+        specific first: playhead, held, note, anchor row, beat marker, empty."""
+        if not liveobj_valid(self._clip) and not self._selected_track_can_hold_midi():
+            return GREY_EMPTY
+        note = self._find_note_at_step_pitch(step, pitch)
+        if self._playhead_is_on_step(step):
+            # Over a note the playhead goes full white; over empty space it is
+            # only a bright grey, so the column reads as "here" without
+            # pretending there is content.
+            return RGB_WHITE if note is not None else GREY_BRIGHT
+        if self._is_cell_held(step, pitch):
+            return RGB_WHITE
+        if note is not None:
+            return self._shade_for_velocity(note.velocity)
+        if self._is_anchor_pitch(pitch):
+            return GREY_MID
+        return GREY_DIM if x in (0, 4) else GREY_EMPTY
 
     def _find_note_at_step_pitch(self, step, pitch):
         start = step * self._step_length
@@ -776,12 +1157,14 @@ class MelodicStepSequencerComponent(Component):
         # Top row only renders the page selector when shift is active. When
         # shift isn't held/locked, row 0 is a normal pitch row and is rendered
         # by _update_pitch_leds (which always iterates the full 0..7 range).
-        if not self._device_shift_held:
+        if not self._device_shift_held or self._lane_velocity_active():
             return
         for x in range(8):
             self._set_grid_light(x, PREVIEW_TOGGLE_Y, self._loop_color(x))
 
     def _loop_color(self, index):
+        if self._rgb_leds():
+            return self._loop_rgb(index)
         if index == PREVIEW_TOGGLE_X:
             return "MelodicSequencer.Preview.On" if self._preview_mode else "MelodicSequencer.Preview.Off"
         if not liveobj_valid(self._clip) and not self._selected_track_can_hold_midi():
@@ -797,6 +1180,23 @@ class MelodicStepSequencerComponent(Component):
             if self._clip.loop_start <= start < self._clip.loop_end:
                 return "MelodicSequencer.Loop.Inside"
         return "MelodicSequencer.Loop.Outside"
+
+    def _loop_rgb(self, index):
+        if index == PREVIEW_TOGGLE_X:
+            return self._shade(NOTE_SHADE_LEVELS) if self._preview_mode else GREY_DIM
+        if not liveobj_valid(self._clip) and not self._selected_track_can_hold_midi():
+            return GREY_EMPTY
+        if index in self._loop_press_points:
+            return RGB_WHITE
+        if self._playhead_is_on_page(index):
+            return RGB_WHITE
+        if index == self._page_index:
+            return self._shade(NOTE_SHADE_LEVELS)
+        if liveobj_valid(self._clip):
+            start = index * self._page_length
+            if self._clip.loop_start <= start < self._clip.loop_end:
+                return self._shade(3)
+        return GREY_EMPTY
 
     def _playhead_is_on_step(self, step):
         if self._playhead is None:
@@ -857,6 +1257,8 @@ class MelodicStepSequencerComponent(Component):
             return
         for y in range(PITCH_ROW_MIN, PITCH_ROW_MAX + 1):
             pitch = self._pitch_for_row(y)
+            if pitch is None:
+                continue
             for x in range(8):
                 button = self._get_grid_button(x, y)
                 if button is not None:
@@ -864,6 +1266,135 @@ class MelodicStepSequencerComponent(Component):
                     button.set_channel(AUDITION_CHANNEL)
                     button.script_forwarding = ScriptForwarding.non_consuming
         self._request_midi_map_rebuild()
+
+    # --- Lane velocity view (hold a scene button) -----------------------
+
+    def _lane_velocity_active(self):
+        """True while the view owns the grid. Shift wins over it — shift turns
+        the whole grid into a loop picker, and two surfaces cannot share it."""
+        return self._lane_velocity_armed and not self._device_shift_held
+
+    def _arm_lane_velocity(self):
+        if not self.is_enabled() or self._lane_velocity_scene is None:
+            return
+        if self._device_shift_held or self._lane_velocity_armed:
+            return
+        self._lane_velocity_armed = True
+        # Holding a scene means "look at this lane", not "keep editing steps":
+        # drop step state so a stale release can't toggle a note underneath.
+        self._held_grid_buttons = set()
+        self._held_note_cells = {}
+        self._consumed_note_cells = set()
+        self._disarm_velocity_overlay()
+        self._emit(Event.MELODIC_LANE_VELOCITY_VIEW,
+                   name=self._lane_name(self._lane_velocity_scene))
+        self.update()
+
+    def _disarm_lane_velocity(self):
+        self._lane_velocity_arm_task.kill()
+        self._lane_velocity_scene = None
+        if self._lane_velocity_armed:
+            self._lane_velocity_armed = False
+            if self.is_enabled():
+                self.update()
+
+    def _lane_name(self, y):
+        """Human label for a row: the drum pad's name on a rack, otherwise the
+        note name. Used for the status bar only."""
+        pitch = self._pitch_for_row(y)
+        if pitch is None:
+            return "empty"
+        if self._drum_lane_mode():
+            for pad in self._used_pads:
+                if pad.note == pitch:
+                    name = getattr(pad, "name", None)
+                    if name:
+                        return name
+                    break
+        names = ("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B")
+        return "{}{}".format(names[pitch % 12], int(pitch / 12) - 2)
+
+    def _lane_velocity_cell_to_level(self, y):
+        """Grid row → level 1..8, read bottom-up (row 7 = level 1)."""
+        if not PITCH_ROW_MIN <= y <= PITCH_ROW_MAX:
+            return None
+        return PITCH_ROW_MAX - y + 1
+
+    def _velocity_for_lane_level(self, level):
+        return max(VELOCITY_MIN,
+                   min(VELOCITY_MAX, level * LANE_VELOCITY_STEP))
+
+    def _lane_level_for_velocity(self, velocity):
+        """Inverse, rounding up so any audible note lights at least level 1."""
+        return max(1, min(LANE_VELOCITY_LEVELS,
+                          -(-int(velocity) // LANE_VELOCITY_STEP)))
+
+    def _handle_lane_velocity_press(self, x, y):
+        """Tap at a height: set that step's velocity, or create the note at
+        that velocity when the step is empty (same Push-style behaviour as the
+        step-hold overlay)."""
+        row = self._lane_velocity_scene
+        if row is None:
+            return
+        pitch = self._pitch_for_row(row)
+        if pitch is None:
+            return
+        level = self._lane_velocity_cell_to_level(y)
+        if level is None or not self._ensure_clip():
+            return
+        velocity = self._velocity_for_lane_level(level)
+        step = self._page_index * STEPS_PER_PAGE + x
+        note = self._find_note_at_step_pitch(step, pitch)
+        if note is None:
+            start = step * self._step_length
+            self._clip.add_new_notes((Live.Clip.MidiNoteSpecification(
+                pitch=pitch, start_time=start, duration=self._step_length,
+                velocity=velocity, mute=False),))
+            self._clip.deselect_all_notes()
+            self._ensure_loop_contains_time(start + self._step_length)
+        elif int(note.velocity) != velocity:
+            self._replace_note_at(note, velocity=velocity)
+        else:
+            return
+        self._refresh_notes()
+        self._emit(Event.MELODIC_LANE_VELOCITY,
+                   name=self._lane_name(row), step=(x + 1), velocity=velocity)
+        self.update()
+
+    def _render_lane_velocity(self):
+        """Paint the velocity profile of the held lane: one column per step of
+        the current page, a bar growing from the bottom."""
+        row = self._lane_velocity_scene
+        pitch = self._pitch_for_row(row) if row is not None else None
+        for x in range(8):
+            note = None
+            if pitch is not None:
+                step = self._page_index * STEPS_PER_PAGE + x
+                note = self._find_note_at_step_pitch(step, pitch)
+            current = (self._lane_level_for_velocity(note.velocity)
+                       if note is not None else 0)
+            for y in range(PITCH_ROW_MIN, PITCH_ROW_MAX + 1):
+                level = self._lane_velocity_cell_to_level(y)
+                if pitch is None:
+                    self._set_grid_light(
+                        x, y, RGB_BLACK if self._rgb_leds()
+                        else "DefaultButton.Disabled")
+                    continue
+                if level <= current:
+                    if self._rgb_leds():
+                        # Same clip-hue ramp as the step grid, so a bar height
+                        # and a note's shade read as the same scale.
+                        self._set_grid_light_rgb(
+                            x, y, self._note_shade_ramp()[level - 1])
+                        continue
+                    # Palette fallback: 8 levels over a 16-entry ramp, every
+                    # second entry so the full colour range is still used.
+                    self._set_grid_light_palette(
+                        x, y, VELOCITY_LEVEL_PALETTE[level * 2 - 1])
+                elif self._rgb_leds():
+                    self._set_grid_light(x, y, GREY_EMPTY)
+                else:
+                    self._set_grid_light_palette(x, y, VELOCITY_LEVEL_DIM)
 
     def _make_control_button_listener(self, index):
         def listener(value):
@@ -880,21 +1411,40 @@ class MelodicStepSequencerComponent(Component):
     def _on_control_button_value(self, index, value):
         if not self.is_enabled():
             return
-        if not value:
-            return
         if self._is_main_mode_selector_held():
+            # Parent's mode selector owns the scene column — drop any lane
+            # view we were arming so it can't fire behind the selector.
+            self._disarm_lane_velocity()
             return
+        if value:
+            # Press only arms the lane view; the slot's own action now fires on
+            # RELEASE, so hold and tap can share the same button. The arm delay
+            # means a quick tap never flashes the view.
+            self._lane_velocity_scene = index
+            self._lane_velocity_arm_task.restart()
+            return
+        was_armed = self._lane_velocity_armed
+        self._disarm_lane_velocity()
+        if was_armed:
+            # The hold was a lane view — releasing just closes it.
+            return
+        self._perform_control_button_action(index)
+
+    def _perform_control_button_action(self, index):
         if index == self._chromatic_slot:
             # Dual-purpose slot: chromatic toggle when shift held (or when
             # the device exposes direct slots), Capture MIDI otherwise.
+            # Chromatic/scale mean nothing on a drum rack — the rows are pads.
             if self._direct_slot_actions or self._device_shift_held:
-                self._toggle_chromatic_mode()
+                if not self._drum_lane_mode():
+                    self._toggle_chromatic_mode()
             else:
                 self._capture_midi()
         elif index == self._scale_cycle_slot:
             # Dual-purpose slot: scale cycle / Quantize.
             if self._direct_slot_actions or self._device_shift_held:
-                self._cycle_scale(1)
+                if not self._drum_lane_mode():
+                    self._cycle_scale(1)
             else:
                 self._quantize_selected()
         elif index == self._cycle_slot:
@@ -993,8 +1543,12 @@ class MelodicStepSequencerComponent(Component):
         return GRID_OPTIONS[self._grid_option_index][1]
 
     def _cycle_color(self):
-        return ("MelodicSequencer.Control.CycleGrid"
-                if self._bottom_right_mode == BOTTOM_RIGHT_MODE_GRID
+        grid_mode = self._bottom_right_mode == BOTTOM_RIGHT_MODE_GRID
+        if self._rgb_leds():
+            # Hue while the 4x4 is showing resolutions (a chosen state), grey
+            # while it is the plain pitch grid.
+            return self._shade(NOTE_SHADE_LEVELS) if grid_mode else GREY_DIM
+        return ("MelodicSequencer.Control.CycleGrid" if grid_mode
                 else "MelodicSequencer.Control.CycleLoop")
 
     def _toggle_bottom_right_mode(self):
@@ -1047,11 +1601,21 @@ class MelodicStepSequencerComponent(Component):
         # Dual-purpose slot. Shift held (or direct slots) → chromatic
         # toggle. Otherwise → Capture MIDI (bright when capturable, dim
         # otherwise).
+        rgb = self._rgb_leds()
         if self._direct_slot_actions or self._device_shift_held:
+            if self._drum_lane_mode():
+                # Chromatic means nothing on a rack — the rows are pads.
+                return RGB_BLACK if rgb else "DefaultButton.Disabled"
+            if rgb:
+                return (self._shade(NOTE_SHADE_LEVELS) if self._chromatic_mode
+                        else GREY_DIM)
             return ("MelodicSequencer.Control.GridSelected"
                     if self._chromatic_mode
                     else "MelodicSequencer.Control.Grid")
-        if getattr(self.song, "can_capture_midi", False):
+        ready = getattr(self.song, "can_capture_midi", False)
+        if rgb:
+            return self._shade(NOTE_SHADE_LEVELS) if ready else GREY_DIM
+        if ready:
             return "MelodicSequencer.Control.CaptureMidiReady"
         return "MelodicSequencer.Control.CaptureMidi"
 
@@ -1059,9 +1623,13 @@ class MelodicStepSequencerComponent(Component):
         """Dual-purpose slot: scale cycle (shift held, or direct slots) /
         Quantize otherwise. Encapsulates both LED states in one helper to
         keep `_update_control_leds` compact."""
+        rgb = self._rgb_leds()
         if self._direct_slot_actions or self._device_shift_held:
-            return "MelodicSequencer.Control.ScaleCycle"
-        return "MelodicSequencer.Control.Quantize"
+            if self._drum_lane_mode():
+                return RGB_BLACK if rgb else "DefaultButton.Disabled"
+            # Always available, never "chosen" — it stays on the grey ramp.
+            return GREY_MID if rgb else "MelodicSequencer.Control.ScaleCycle"
+        return GREY_MID if rgb else "MelodicSequencer.Control.Quantize"
 
     def _capture_midi(self):
         """Post-capture: re-resolve the clip, re-arm the build-out gate,
@@ -1137,6 +1705,8 @@ class MelodicStepSequencerComponent(Component):
         self.update()
 
     def _velocity_overlay_should_show(self):
+        if self._lane_velocity_active():
+            return False
         """Overlay is active once the hold-arm task has fired AND device
         shift is NOT held (shift gestures keep priority for rows 1..7).
         The arm fires when a cell has been held continuously for
@@ -1205,6 +1775,12 @@ class MelodicStepSequencerComponent(Component):
             else:
                 x = level - 9
                 y = VELOCITY_OVERLAY_ROW_TOP
+            if self._rgb_leds():
+                self._set_grid_light(
+                    x, y,
+                    self._shade(level, VELOCITY_OVERLAY_LEVELS)
+                    if level <= current else GREY_EMPTY)
+                continue
             palette = (VELOCITY_LEVEL_PALETTE[level - 1] if level <= current
                        else VELOCITY_LEVEL_DIM)
             self._set_grid_light_palette(x, y, palette)
@@ -1222,6 +1798,8 @@ class MelodicStepSequencerComponent(Component):
         modified = False
         for (x, y) in list(self._held_grid_buttons):
             pitch = self._pitch_for_row(y)
+            if pitch is None:
+                continue
             step = self._page_index * STEPS_PER_PAGE + x
             note = self._find_note_at_step_pitch(step, pitch)
             if note is None:
@@ -1298,12 +1876,23 @@ class MelodicStepSequencerComponent(Component):
         if not pressed:
             self._step_loop_press_points = []
             self._step_loop_range_active = False
+        if pressed:
+            self._disarm_lane_velocity()
         if self.is_enabled():
             if self._preview_mode:
                 self._update_audition_translations()
             self.update()
 
     def _adjust_pitch_offset(self, delta):
+        # Drum-lane mode has no transposition — the rows ARE the rack. Reuse
+        # the same arrows to scroll the pad window: octave arrows (±12) move
+        # a full bank of DRUM_LANES pads, semitone arrows (±1) move one pad.
+        if self._drum_lane_mode():
+            if delta == 0:
+                return
+            step = DRUM_LANES if abs(delta) >= 12 else 1
+            self._scroll_drum_lanes(step if delta > 0 else -step)
+            return
         self._set_pitch_offset(self._pitch_offset + delta)
 
     def _set_pitch_offset(self, offset):
@@ -1334,10 +1923,13 @@ class MelodicStepSequencerComponent(Component):
         # RESERVED (was device shift; now session-only). Actual positions
         # come from the configure_slots() assignments; unassigned (or
         # None, i.e. disabled) slots stay dark.
-        shift_color = ("MelodicSequencer.Control.Shift"
-                       if self._device_shift_held
-                       else "DefaultButton.Disabled")
-        colors = ["DefaultButton.Disabled"] * len(self._control_buttons)
+        off = RGB_BLACK if self._rgb_leds() else "DefaultButton.Disabled"
+        if self._rgb_leds():
+            shift_color = RGB_WHITE if self._device_shift_held else off
+        else:
+            shift_color = ("MelodicSequencer.Control.Shift"
+                           if self._device_shift_held else off)
+        colors = [off] * len(self._control_buttons)
 
         def assign(slot, color):
             if slot is not None and 0 <= slot < len(colors):
@@ -1347,30 +1939,59 @@ class MelodicStepSequencerComponent(Component):
         assign(self._scale_cycle_slot, self._scale_or_quantize_color())
         assign(self._shift_slot, shift_color)
         assign(self._cycle_slot, self._cycle_color())
+        # The lane whose velocity view is up takes over its own slot's colour.
+        if self._lane_velocity_active():
+            assign(self._lane_velocity_scene,
+                   RGB_WHITE if self._rgb_leds()
+                   else "MelodicSequencer.LaneVelocity")
         for index, button in enumerate(self._control_buttons):
+            self._set_control_light(
+                button, colors[index] if self.is_enabled() else off)
+
+    def _set_control_light(self, button, color):
+        """Scene-button write. In Programmer mode a button's LED index is its
+        CC number, so the RGB colour-spec path addresses it exactly like a pad;
+        skin names still go through the framework."""
+        if isinstance(color, tuple):
             try:
-                button.set_light(colors[index] if self.is_enabled() else "DefaultButton.Disabled")
+                index = button.original_identifier()
             except Exception:
-                pass
+                return
+            self._write_rgb(index, color)
+            return
+        try:
+            button.set_light(color)
+        except Exception:
+            pass
 
     def _turn_control_buttons_off(self):
+        off = RGB_BLACK if self._rgb_leds() else "DefaultButton.Disabled"
         for button in self._control_buttons:
-            try:
-                button.set_light("DefaultButton.Disabled")
-            except Exception:
-                pass
+            self._set_control_light(button, off)
 
     def _selected_track_can_hold_midi(self):
         track = self.song.view.selected_track
         return liveobj_valid(track) and getattr(track, "has_midi_input", True)
 
     def _turn_grid_off(self):
-        if self._grid_matrix is not None:
+        if self._grid_matrix is None:
+            return
+        off = RGB_BLACK if self._rgb_leds() else "DefaultButton.Disabled"
+        self._begin_rgb_batch()
+        try:
             for y in range(8):
                 for x in range(8):
-                    self._set_grid_light(x, y, "DefaultButton.Disabled")
+                    self._set_grid_light(x, y, off)
+        finally:
+            self._flush_rgb_batch()
 
     def _set_grid_light(self, x, y, color):
+        """Accepts a skin colour NAME or an (r, g, b) triple. Every colour
+        helper returns a triple on RGB devices and a name otherwise, so this
+        one dispatch keeps all call sites unchanged."""
+        if isinstance(color, tuple):
+            self._set_grid_light_rgb(x, y, color)
+            return
         button = self._get_grid_button(x, y)
         if button is not None:
             self._send_programmer_pad_color(button, color)
@@ -1414,6 +2035,86 @@ class MelodicStepSequencerComponent(Component):
             self.canonical_parent.request_rebuild_midi_map()
         except Exception:
             pass
+
+    # --- Note shading (clip hue, Push style) ----------------------------
+
+    def _clip_color(self):
+        """The clip's Live colour as 0xRRGGBB, or a fallback hue."""
+        if liveobj_valid(self._clip):
+            try:
+                color = int(self._clip.color)
+                if color > 0:
+                    return color
+            except Exception:
+                pass
+        return DEFAULT_CLIP_COLOR
+
+    def _rgb_leds(self):
+        """True when this device renders through RGB colour specs."""
+        return SUPPORTS_RGB_LEDS and RGB_NOTE_SHADES
+
+    def _shade_ramp(self, levels):
+        """Cached `levels` shades of the clip hue, darkest first. Keyed by
+        level count so the 8-level note ramp and the 16-level overlay ramp
+        coexist instead of evicting each other."""
+        color = self._clip_color()
+        if color != self._note_shade_source:
+            self._note_shade_source = color
+            self._shade_ramps = {}
+        ramp = self._shade_ramps.get(levels)
+        if ramp is None:
+            ramp = rgb_shades(color, levels, floor=NOTE_SHADE_FLOOR)
+            self._shade_ramps[levels] = ramp
+        return ramp
+
+    def _note_shade_ramp(self):
+        return self._shade_ramp(NOTE_SHADE_LEVELS)
+
+    def _shade(self, level, levels=NOTE_SHADE_LEVELS):
+        """One shade of the clip hue, `level` in 1..levels."""
+        return self._shade_ramp(levels)[max(1, min(levels, level)) - 1]
+
+    def _shade_for_velocity(self, velocity):
+        level = max(1, min(NOTE_SHADE_LEVELS,
+                           -(-int(velocity) // LANE_VELOCITY_STEP)))
+        return self._note_shade_ramp()[level - 1]
+
+    def _is_anchor_pitch(self, pitch):
+        """The row acting as the visual landmark: the scale root, or the pad
+        Live has selected when the rows are drum lanes."""
+        if self._drum_lane_mode():
+            return pitch == self._selected_drum_pad_note()
+        return pitch % 12 == self._root_pitch() % 12
+
+    def _begin_rgb_batch(self):
+        if self._rgb_batch_depth == 0:
+            self._rgb_batch = []
+        self._rgb_batch_depth += 1
+
+    def _flush_rgb_batch(self):
+        self._rgb_batch_depth = max(0, self._rgb_batch_depth - 1)
+        if self._rgb_batch_depth:
+            return
+        batch, self._rgb_batch = self._rgb_batch, None
+        if batch:
+            send_pad_rgb(self.canonical_parent, batch)
+
+    def _write_rgb(self, index, color):
+        """Queue one LED index → RGB write, or send it alone if no batch."""
+        if self._rgb_batch is not None:
+            self._rgb_batch.append((index, color))
+        else:
+            send_pad_rgb(self.canonical_parent, [(index, color)])
+
+    def _set_grid_light_rgb(self, x, y, shade):
+        button = self._get_grid_button(x, y)
+        if button is None:
+            return
+        try:
+            index = button.original_identifier()
+        except Exception:
+            return
+        self._write_rgb(index, shade)
 
     def _send_programmer_pad_color(self, button, color):
         note, color_value = send_pad_color(

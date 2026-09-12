@@ -1,0 +1,1115 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Launchpad Pro MK3 — Layout &amp; fonctionnalités</title>
+<style>
+  :root {
+    --bg:#15171a; --panel:#1f2226; --panel2:#262a2f;
+    --border:#2e3338; --border-hi:#4a5158;
+    --text:#d6dadd; --dim:#8a939a; --hi:#ffffff;
+    --accent:#5dd39e; --accent-bg:#1a3a2e;
+    --warn:#f1c40f; --danger:#e63946; --link:#7fb6ea;
+  }
+  *{box-sizing:border-box}
+  body{font:14px/1.55 -apple-system,"Segoe UI",system-ui,sans-serif;
+       background:var(--bg);color:var(--text);margin:0}
+  a{color:var(--link)}
+  h1,h2,h3,h4{color:var(--hi)}
+  code,kbd{background:#0e1014;color:#c2e0ff;padding:1px 6px;border-radius:3px;
+           font:12px/1.4 "SF Mono",Menlo,Consolas,monospace}
+  kbd{border:1px solid var(--border-hi)}
+
+  .app{display:grid;grid-template-columns:270px 1fr;min-height:100vh}
+  @media (max-width:900px){.app{grid-template-columns:1fr}
+    .sidebar{position:static!important;height:auto!important}}
+
+  /* Sidebar */
+  .sidebar{background:var(--panel);border-right:1px solid var(--border);
+           padding:18px 0;overflow-y:auto;position:sticky;top:0;height:100vh}
+  .brand{padding:0 18px 16px;border-bottom:1px solid var(--border);margin-bottom:14px}
+  .brand h1{font-size:15px;margin:0}
+  .brand p{margin:4px 0 0;font-size:11.5px;color:var(--dim)}
+  .group-title{padding:10px 18px 4px;font-size:11px;color:var(--dim);
+               text-transform:uppercase;letter-spacing:.7px;font-weight:600}
+  .mode-btn{display:block;width:100%;text-align:left;background:transparent;border:0;
+            color:var(--text);padding:6px 18px 6px 26px;cursor:pointer;font:inherit;
+            border-left:3px solid transparent}
+  .mode-btn:hover{background:var(--panel2)}
+  .mode-btn.active{background:var(--accent-bg);color:var(--hi);
+                   border-left-color:var(--accent);font-weight:600}
+  .mode-btn .sub{display:block;font-size:10.5px;color:var(--dim);margin-top:1px;font-weight:400}
+
+  /* Main */
+  .main{padding:28px 36px 70px;max-width:1180px;min-width:0}
+  .main h1{margin:0 0 2px;font-size:23px}
+  .crumb{color:var(--dim);font-size:12.5px;margin-bottom:14px}
+  .activation{background:var(--panel);padding:11px 14px;border-radius:6px;
+              border-left:3px solid var(--accent);margin:0 0 16px}
+  .row{display:grid;grid-template-columns:auto minmax(320px,1fr);gap:30px;align-items:start}
+  @media (max-width:1150px){.row{grid-template-columns:1fr}}
+
+  /* Launchpad */
+  .lp-wrap{background:#0a0c0e;padding:14px;border-radius:16px;
+           border:1px solid var(--border);width:max-content}
+  .lp{display:grid;grid-template-columns:repeat(10,42px);
+      grid-template-rows:repeat(11,42px);gap:4px}
+  .pad{width:42px;height:42px;display:flex;align-items:center;justify-content:center;
+       font-size:8.5px;line-height:1.08;font-weight:700;border-radius:5px;
+       border:1px solid rgba(255,255,255,.07);position:relative;text-align:center;
+       padding:2px;user-select:none;overflow:visible}
+  .pad.round{border-radius:50%}
+  .pad.empty{background:transparent!important;border:none}
+  .pad[data-tip]:hover{outline:2px solid var(--accent);outline-offset:1px;z-index:20}
+  .pad[data-tip]:hover::after{content:attr(data-tip);position:absolute;bottom:118%;
+       left:50%;transform:translateX(-50%);background:#05070a;color:#fff;padding:7px 10px;
+       border-radius:5px;font-size:11px;font-weight:400;line-height:1.4;z-index:30;
+       border:1px solid var(--border-hi);min-width:150px;max-width:300px;
+       box-shadow:0 4px 14px rgba(0,0,0,.7);pointer-events:none;text-align:left}
+  .lp-caption{color:var(--dim);font-size:11.5px;margin-top:10px;text-align:center;
+              max-width:470px}
+
+  /* Info */
+  .info h3{margin:22px 0 8px;font-size:12.5px;text-transform:uppercase;letter-spacing:.8px;
+           color:var(--dim);border-bottom:1px solid var(--border);padding-bottom:6px}
+  .info h3:first-child{margin-top:0}
+  .info p{margin:7px 0}
+  .info ul{padding-left:19px;margin:7px 0}
+  .info li{margin:5px 0}
+  .tbl{background:var(--panel);border-radius:6px;border:1px solid var(--border);overflow:hidden}
+  .tbl table{width:100%;border-collapse:collapse;font-size:13px}
+  .tbl th,.tbl td{padding:7px 11px;text-align:left;border-bottom:1px solid var(--border);
+                  vertical-align:top}
+  .tbl th{background:var(--panel2);color:var(--hi);font-weight:600;font-size:11.5px;
+          text-transform:uppercase;letter-spacing:.5px}
+  .tbl tr:last-child td{border-bottom:none}
+  .tbl td:first-child{white-space:nowrap;color:var(--accent);font-weight:600;
+                      font-family:"SF Mono",Menlo,monospace;font-size:12px}
+  .note{background:rgba(241,196,15,.07);border-left:3px solid var(--warn);
+        padding:9px 13px;border-radius:0 5px 5px 0;margin:10px 0;font-size:13px}
+  .note strong{color:var(--warn)}
+  .legend{background:var(--panel);border-radius:6px;border:1px solid var(--border);
+          padding:12px 15px;margin-top:14px;max-width:470px}
+  .legend div{display:flex;align-items:center;gap:8px;font-size:12px;margin:5px 0;color:var(--dim)}
+  .sw{width:13px;height:13px;border-radius:3px;flex:0 0 13px;
+      border:1px solid rgba(255,255,255,.14)}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand">
+      <h1>Launchpad Pro MK3</h1>
+      <p>Script custom — layout &amp; modes<br>Ableton Live 12 · Programmer mode</p>
+    </div>
+    <nav id="nav"></nav>
+  </aside>
+  <main class="main" id="main"></main>
+</div>
+
+<script>
+/* =========================================================================
+   Palette (approximations HTML des index firmware Launchpad 0-127)
+   ====================================================================== */
+const C = {
+  off:'#16181a', grey:'#2f3338', greyDim:'#1f2327',
+  white:'#ffffff', whiteHalf:'#5a5a5a',
+  red:'#e63946', redHalf:'#4a1f22',
+  orange:'#e67e22', orangeHalf:'#5a3818',
+  amber:'#ffbf00', amberHalf:'#5a4400',
+  yellow:'#f1c40f', yellowHalf:'#5a4a08',
+  green:'#2ecc71', greenHalf:'#1a5a32',
+  mint:'#7be0c0', cyan:'#13c4d4',
+  blue:'#3498db', blueHalf:'#1c3a5a',
+  purple:'#9b59b6', purpleHalf:'#3a1c4a',
+  clip:'#3d6b8f', clipDim:'#22404f',
+  pink:'#e0559a',
+};
+
+/* =========================================================================
+   Géométrie physique du Launchpad Pro MK3
+   (confirmée : script usine décompilé Launchpad_Pro_MK3/elements.py
+    + Programmer's Reference Novation)
+
+   Grille 10 colonnes x 11 lignes :
+     ligne 0  : [90 Shift] [91..98 rangée du haut]        (col 9 vide)
+     lignes 1-8: [col. gauche] [pads 8x8] [scene launch]
+     ligne 9  : rangée track select   CC 101-108
+     ligne 10 : rangée track control  CC 1-8
+   ====================================================================== */
+const TOP    = [[91,'←'],[92,'→'],[93,'Session'],[94,'Note'],[95,'Chord'],
+                [96,'Custom'],[97,'Sequen.'],[98,'Projects']];
+const LEFT   = [[80,'↑'],[70,'↓'],[60,'Clear'],[50,'Dupl.'],[40,'Quant.'],
+                [30,'Fixed L.'],[20,'Play'],[10,'Rec']];
+const SCENES = [89,79,69,59,49,39,29,19];
+const TRK    = [101,102,103,104,105,106,107,108];
+const FN     = [[1,'Rec Arm'],[2,'Mute'],[3,'Solo'],[4,'Volume'],[5,'Pan'],
+                [6,'Sends'],[7,'Device'],[8,'Stop Clip']];
+
+/* ------------------------------------------------------------------ utils */
+const P = (c,l,t)=>({c,l,t});
+function fillGrid(o,fn){for(let y=0;y<8;y++)for(let x=0;x<8;x++){
+  const v=fn(x,y); if(v) o['g'+x+y]=v;}}
+function rangeGrid(o,x0,x1,y0,y1,fn){for(let y=y0;y<=y1;y++)for(let x=x0;x<=x1;x++){
+  const v=fn(x,y); if(v) o['g'+x+y]=v;}}
+
+/* ---------------------------------------------------- socles de rendu LED */
+// Boutons inertes sur toutes les pages (consommés par le background, LED off).
+function inert(o){
+  o.t94=P(C.off,'Note','Réservé — consommé par le script, LED éteinte. N\'ouvre aucune page firmware.');
+  o.t95=P(C.off,'Chord','Réservé — consommé par le script, LED éteinte.');
+  o.t96=P(C.off,'Custom','Réservé — consommé par le script, LED éteinte.');
+  o.t98=P(C.off,'Projects','Réservé — inerte (INERT_BUTTON_CCS).');
+  o.l30=P(C.off,'Fixed L.','Réservé — inerte (INERT_BUTTON_CCS).');
+  ['f3','f4','f5','f6'].forEach((k,i)=>{
+    o[k]=P(C.off,FN[i+3][1],'Inerte en v1 — les button faders exigent le layout Fader du mode DAW.');
+  });
+  return o;
+}
+// Transport + Shift : identiques dans tous les modes.
+function transport(o){
+  o.t90=P(C.whiteHalf,'Shift','CC 90 — modificateur pur (maintien). Aucun tap, aucun double-tap, aucun lock.');
+  o.l20=P(C.green,'Play','CC 20 — Play / Stop du morceau. Actif dans TOUS les modes.');
+  o.l10=P(C.red,'Rec','CC 10 — Session Record. Shift+Rec = Capture MIDI. Actif dans TOUS les modes.');
+  return o;
+}
+
+/* ---------------------------------------------------- socle mode Session */
+function sessionBase(){
+  const o={};
+  inert(o); transport(o);
+  o.t91=P(C.greyDim,'←','Session navigation — banque de pistes vers la gauche (LED éteinte en Session).');
+  o.t92=P(C.greyDim,'→','Session navigation — banque de pistes vers la droite (LED éteinte en Session).');
+  o.t93=P(C.green,'Session','Mode courant. Double-clic = Session Overview.');
+  o.t97=P(C.grey,'Sequen.','CC 97 — maintenir = sélecteur de mode sur la colonne scene. Tap simple = séquenceur drum.');
+  o.l80=P(C.greyDim,'↑','Session navigation — banque de scènes vers le haut (LED éteinte en Session).');
+  o.l70=P(C.greyDim,'↓','Session navigation — banque de scènes vers le bas (LED éteinte en Session).');
+  o.l60=P(C.redHalf,'Clear','CC 60 — modificateur Delete (maintien). Clear est prioritaire sur Duplicate.');
+  o.l50=P(C.greenHalf,'Dupl.','CC 50 — modificateur Duplicate (maintien).');
+  o.l40=P(C.off,'Quant.','Éteint en Session : la quantification de clip n\'est pas encore assignée (réservé v1).');
+  fillGrid(o,()=>P(C.clip,'Clip','Clip launch 8x8. Toutes les rangées restent des clips : la rangée mixer vit sous la grille.'));
+  SCENES.forEach((cc,i)=>o['s'+i]=P(C.amberHalf,'Scene','Scene launch (CC '+cc+').'));
+  TRK.forEach((cc,i)=>o['k'+i]=P(C.whiteHalf,'Trk '+(i+1),'Track select (CC '+cc+') — mode « track_select » par défaut : sélectionne la piste, 2e appui = arm (exclusive_arm respecté).'));
+  o.f0=P(C.redHalf,'Rec Arm','CC 1 — bascule la rangée en mode Arm. Shift+Rec Arm = Undo.');
+  o.f1=P(C.amberHalf,'Mute','CC 2 — bascule la rangée en mode Mute. Shift+Mute = Redo.');
+  o.f2=P(C.blueHalf,'Solo','CC 3 — bascule la rangée en mode Solo.');
+  o.f7=P(C.whiteHalf,'Stop Clip','CC 8 — bascule la rangée en mode Stop Clip. Shift+Stop Clip = Stop All Clips.');
+  return o;
+}
+
+/* -------------------------------------------------- socle modes séquenceur */
+function seqBase(opts){
+  opts = opts||{};
+  const o={};
+  inert(o); transport(o);
+  o.t93=P(opts.pinned?C.blue:C.greenHalf,'Session',
+    'Retour au clip launch. Shift+Session = panneau de sélection de mode. Bleu = piste épinglée.');
+  o.t97=P(opts.drum?C.amber:C.grey,'Sequen.','Maintenir = sélecteur de mode sur la colonne scene. Tap simple = séquenceur drum.');
+  o.l80=P(C.greenHalf,'↑',opts.upTip||'+12 demi-tons.');
+  o.l70=P(C.greenHalf,'↓',opts.downTip||'−12 demi-tons.');
+  o.t91=P(C.mint,'←',opts.leftTip||'−1 demi-ton.');
+  o.t92=P(C.mint,'→',opts.rightTip||'+1 demi-ton.');
+  o.l60=opts.actions?P(C.redHalf,'Clear','Modificateur Delete (maintien) — voir la page dédiée.')
+                    :P(C.off,'Clear','Éteint : ce composant n\'expose pas set_action_modifier().');
+  o.l50=opts.actions?P(C.greenHalf,'Dupl.','Modificateur Duplicate (maintien). Shift+Duplicate = double la boucle.')
+                    :P(C.off,'Dupl.','Éteint : ce composant n\'expose ni set_action_modifier() ni double_loop().');
+  o.l40=opts.quantize===false
+    ?P(C.off,'Quant.','Éteint : le mode Chord n\'expose pas quantize_selected().')
+    :P(C.yellowHalf,'Quant.','CC 40 — quantifie la sélection (pas maintenus, sinon portée du pad / clip).');
+  TRK.forEach((cc,i)=>o['k'+i]=P(C.off,'','Rangée mixer éteinte et inerte hors du mode Session.'));
+  FN.forEach((f,i)=>{if(!o['f'+i]) o['f'+i]=P(C.off,'','Rangée mixer éteinte hors Session — seules les combos Shift restent actives (Undo / Redo / Stop All).');});
+  o.f3=P(C.off,'','Inerte.');o.f4=P(C.off,'','Inerte.');o.f5=P(C.off,'','Inerte.');o.f6=P(C.off,'','Inerte.');
+  return o;
+}
+
+/* -------------------------------------------- helpers grilles séquenceurs */
+function drumSelector(o,sel){
+  // 4x4 en bas à gauche = 16 sons du Drum Rack, layout clavier de batterie :
+  // rangée du bas (y=7) = index 0-3 (graves), rangée du haut (y=4) = 12-15.
+  rangeGrid(o,0,3,4,7,(x,y)=>{
+    const idx=(7-y)*4+x;
+    const isSel = idx===(sel===undefined?0:sel);
+    return P(isSel?C.white:C.orangeHalf,'S'+idx,
+      'Sélecteur de son '+idx+' — suit visible_drum_pads du Drum Rack quand pitch_offset=0. '+
+      'Les cases remplies prennent la couleur du pad Live. Appui = sélection + audition (canal 1).'+
+      (isSel?' ● Sélectionné.':''));
+  });
+}
+function pagePads(o){
+  rangeGrid(o,4,7,4,7,(x,y)=>{
+    const idx=(y-4)*4+(x-4);
+    return P(idx===0?C.white:C.blueHalf,'P'+(idx+1),
+      'Page '+(idx+1)+' (16 pages de 32 pas). Tap = afficher la page · double-tap (≤0,35 s) = scoper la boucle sur cette page · maintien + autre page = scoper sur la plage.');
+  });
+}
+function gridPads(o){
+  const L=['1/4','1/8','1/16','1/32','1/64','1/128','1/256','1/512',
+           '1/4t','1/8t','1/16t','1/32t','1/64t','1/128t','1/256t','1/512t'];
+  rangeGrid(o,4,7,4,7,(x,y)=>{
+    const idx=(y-4)*4+(x-4);
+    const tern=idx>=8;
+    return P(idx===2?C.white:(tern?C.purple:C.cyan),L[idx],
+      'Résolution '+L[idx]+(tern?' (ternaire — GridTernary / violet)':'')+
+      '. Les notes existantes ne sont PAS remappées : seul l\'alignement pas→temps change. Pages et boucle se recalculent sur page_length.');
+  });
+}
+
+/* =========================================================================
+   MODES
+   ====================================================================== */
+const MODES = {};
+
+/* ---------------------------------------------------------- 0. Matériel */
+MODES['hardware']={
+  group:'Référence', title:'Cartographie matérielle',
+  activation:'Layout physique du Launchpad Pro MK3 et numéros MIDI réellement utilisés par le script.',
+  desc:[
+    'Le Pro MK3 reste en <strong>Programmer mode</strong> pendant toute la session logicielle : le script écrit les LED directement (Note On canal 0 pour les pads, CC canal 0 pour les boutons) et aucune page firmware n\'est ouverte.',
+    'Les pads sont des notes 11–88 (dizaine = rangée, unité = colonne). Tous les boutons périphériques sont des <strong>Control Change canal 0</strong>, identiques en entrée (appui) et en sortie (LED).',
+    'Deux rangées existent sous la grille — c\'est la particularité du Pro face au Mini : <strong>track select</strong> (CC 101-108) puis <strong>track control</strong> (CC 1-8).'
+  ],
+  gestures:[
+    ['CC 90','Shift — coin haut-gauche'],
+    ['CC 91-98','Rangée du haut : ← → Session Note Chord Custom Sequencer Projects'],
+    ['CC 80,70','↑ ↓ (colonne de gauche, rangées 8 et 7)'],
+    ['CC 60,50,40,30','Clear · Duplicate · Quantise · Fixed Length'],
+    ['CC 20,10','Play · Record'],
+    ['CC 89…19','Scene launch, colonne de droite, de haut en bas'],
+    ['CC 101-108','Rangée track select (sous la grille)'],
+    ['CC 1-8','Rangée track control : Rec Arm, Mute, Solo, Volume, Pan, Sends, Device, Stop Clip'],
+    ['Notes 11-88','Grille 8x8 (LED en index palette brut 0-127)'],
+  ],
+  notes:[
+    'Ports MIDI : lier <strong>LPProMK3 MIDI</strong>, <strong>première paire</strong>, en entrée et en sortie. <code>MIDIIN3 / MIDIOUT3</code> est l\'interface DAW du script usine — s\'y lier laisse l\'appareil éteint et fait fuiter les notes des pads dans les pistes.',
+    'Une seule surface pour cet appareil : <strong>Launchpad Pro MK3 Custom</strong>. Passer tout slot usine <code>Launchpad Pro MK3</code> à <strong>None</strong> (sans supprimer les fichiers du script usine).',
+    'Volume / Pan / Sends / Device et Fixed Length / Projects sont volontairement inertes en v1 — LED éteintes, appuis avalés par le background.'
+  ],
+  cells(){
+    const o={};
+    o.t90=P(C.white,'Shift','CC 90');
+    TOP.forEach(([cc,l])=>o['t'+cc]=P(C.blueHalf,l,'CC '+cc));
+    LEFT.forEach(([cc,l])=>o['l'+cc]=P(C.purpleHalf,l,'CC '+cc));
+    SCENES.forEach((cc,i)=>o['s'+i]=P(C.amberHalf,'CC '+cc,'Scene launch '+(i+1)+' — CC '+cc));
+    TRK.forEach((cc,i)=>o['k'+i]=P(C.greenHalf,''+cc,'Track select '+(i+1)+' — CC '+cc));
+    FN.forEach(([cc,l],i)=>o['f'+i]=P(C.orangeHalf,l,'CC '+cc+' — '+l));
+    fillGrid(o,(x,y)=>{
+      const note=(8-y)*10+(x+1);
+      return P(C.clipDim,''+note,'Pad note '+note+' — dizaine = rangée (8 en haut), unité = colonne.');
+    });
+    return o;
+  }
+};
+
+/* ---------------------------------------------------------- 1. Session */
+MODES['session']={
+  group:'Session', title:'Session — Track Select (défaut)',
+  activation:'État de démarrage, et retour par le bouton <strong>Session</strong> (CC 93) depuis n\'importe quel mode.',
+  desc:[
+    'La grille 8x8 entière est le <strong>clip launch</strong> — contrairement au Mini, aucune rangée n\'est sacrifiée : les fonctions mixer vivent sur les deux rangées sous la grille.',
+    'Les 8 scene launch lancent les scènes. Les flèches naviguent la session ring (← → pistes, ↑ ↓ scènes) via le Layer standard ; leurs LED restent éteintes en Session, c\'est volontaire (elles ne s\'allument qu\'en mode séquenceur où elles changent de fonction).',
+    'La rangée <strong>track select</strong> (CC 101-108) est pilotée par un <code>ModesComponent</code> : appuyer sur Rec Arm / Mute / Solo / Stop Clip bascule ce que fait la rangée ; ré-appuyer sur la fonction active revient à « track select ».'
+  ],
+  gestures:[
+    ['Pad','Lance le clip.'],
+    ['Scene launch','Lance la scène.'],
+    ['Track select','Sélectionne la piste ; 2e appui sur la piste déjà sélectionnée = toggle arm (honore <code>song.exclusive_arm</code>).'],
+    ['Rec Arm / Mute / Solo / Stop Clip','Bascule la rangée track select vers Arm / Mute / Solo / Stop. Ré-appui = retour à track select.'],
+    ['Session ×2','Session Overview (la grille devient la vue d\'ensemble des pages).'],
+    ['Shift + Session','Ouvre le panneau de sélection de mode.'],
+    ['Sequencer','Ouvre directement le séquenceur drum.'],
+    ['Play / Rec','Play-Stop · Session Record. Shift+Rec = Capture MIDI (niveau morceau ici).'],
+    ['Shift + Rec Arm / Mute','Undo · Redo (fonctionnent dans tous les modes).'],
+    ['Shift + Stop Clip','Stop All Clips.'],
+  ],
+  notes:['Quantise est éteint en Session : la quantification de clip n\'est pas encore assignée (réservée pour une version ultérieure).'],
+  cells:sessionBase
+};
+
+MODES['session-mixer']={
+  group:'Session', title:'Session — rangée mixer (Arm / Mute / Solo / Stop)',
+  activation:'Appuyer sur <strong>Rec Arm</strong>, <strong>Mute</strong>, <strong>Solo</strong> ou <strong>Stop Clip</strong> (CC 1/2/3/8) en mode Session.',
+  desc:[
+    'Exemple illustré : mode <strong>Mute</strong> actif. La rangée CC 101-108 change de rôle, la grille et les scene launch ne bougent pas.',
+    'Le bouton de fonction actif passe en pleine intensité, les autres restent à mi-intensité. Ré-appuyer dessus ramène la rangée à « track select ».',
+    'Hors mode Session, toute la rangée mixer est éteinte et inerte — seules les combos Shift (Undo / Redo / Stop All Clips) continuent de répondre.'
+  ],
+  gestures:[
+    ['Rec Arm','Rangée = arm des pistes.'],
+    ['Mute','Rangée = mute des pistes.'],
+    ['Solo','Rangée = solo des pistes.'],
+    ['Stop Clip','Rangée = stop du clip de chaque piste.'],
+    ['Fonction active ×2','Retour à track select.'],
+  ],
+  cells(){
+    const o=sessionBase();
+    o.f1=P(C.amber,'Mute','Mode actif — pleine intensité.');
+    TRK.forEach((cc,i)=>o['k'+i]=P(C.amberHalf,'Mute '+(i+1),'Mute de la piste '+(i+1)+' (CC '+cc+').'));
+    return o;
+  }
+};
+
+MODES['session-shift']={
+  group:'Session', title:'Session — Shift maintenu (copier / coller)',
+  activation:'Maintenir <strong>Shift</strong> (CC 90) en mode Session.',
+  desc:[
+    'Shift est un modificateur pur sur le Pro : pas de tap, pas de double-tap, pas de lock — toute la gymnastique du Mini disparaît puisque le bouton est physique.',
+    'Le presse-papier clip et le presse-papier scène sont <strong>vidés au relâchement</strong> de Shift.',
+    'Copie de clip : 1er tap = source, 2e tap = destination (<code>duplicate_clip_to</code>, validation audio/MIDI). Copie de scène : insère une nouvelle scène à l\'index cible, duplique les slots non vides et recopie nom, couleur, tempo et signature.'
+  ],
+  gestures:[
+    ['Shift + pad','Copier / coller un clip.'],
+    ['Shift + scene','Copier / coller une scène.'],
+    ['Shift + Session','Panneau de sélection de mode.'],
+    ['Shift + Rec','Capture MIDI.'],
+    ['Shift + Rec Arm','Undo.'],
+    ['Shift + Mute','Redo.'],
+    ['Shift + Stop Clip','Stop All Clips.'],
+    ['Relâcher Shift','Vide les deux presse-papiers.'],
+  ],
+  cells(){
+    const o=sessionBase();
+    o.t90=P(C.white,'Shift','Maintenu — LED pleine.');
+    fillGrid(o,()=>P(C.cyan,'Copy','Tap = capturer la source ; 2e tap = coller dans ce slot.'));
+    SCENES.forEach((cc,i)=>o['s'+i]=P(C.cyan,'Copy','Tap = capturer la scène source ; 2e tap = insérer la copie à cet index.'));
+    o.f0=P(C.red,'Undo','Shift+Rec Arm = Undo (gated sur can_undo).');
+    o.f1=P(C.amber,'Redo','Shift+Mute = Redo (gated sur can_redo).');
+    o.f7=P(C.white,'Stop All','Shift+Stop Clip = Stop All Clips.');
+    o.l10=P(C.pink,'Capture','Shift+Rec = Capture MIDI.');
+    o.t93=P(C.purple,'Picker','Shift+Session = panneau de sélection de mode.');
+    return o;
+  }
+};
+
+MODES['session-clear']={
+  group:'Session', title:'Session — Clear maintenu (Delete)',
+  activation:'Maintenir <strong>Clear</strong> (CC 60) en mode Session.',
+  desc:[
+    'Le Pro n\'a pas de sous-mode « edit » : <code>EditModeComponent</code> tourne en mode <em>standalone</em>, piloté directement par les boutons Clear et Duplicate.',
+    'Tant qu\'aucun modificateur n\'est maintenu, les pads lancent normalement les clips — <code>is_active()</code> ne réclame l\'appui que pendant le maintien.',
+    '<strong>Clear est prioritaire sur Duplicate</strong> si les deux sont maintenus ; relâcher Clear rend Duplicate actif s\'il est encore tenu.'
+  ],
+  gestures:[
+    ['Clear + pad','<code>clip_slot.delete_clip()</code> sur les slots qui contiennent un clip.'],
+    ['Clear + scene','<code>song.delete_scene(idx)</code> — bloqué s\'il ne reste qu\'une scène (Live en exige au moins une).'],
+    ['Clear + Duplicate','Clear gagne.'],
+  ],
+  cells(){
+    const o=sessionBase();
+    o.l60=P(C.red,'Clear','Maintenu — LED pleine.');
+    fillGrid(o,()=>P(C.redHalf,'Del','Tap = supprimer le clip de ce slot.'));
+    SCENES.forEach((cc,i)=>o['s'+i]=P(C.redHalf,'Del','Tap = supprimer la scène.'));
+    return o;
+  }
+};
+
+MODES['session-duplicate']={
+  group:'Session', title:'Session — Duplicate maintenu',
+  activation:'Maintenir <strong>Duplicate</strong> (CC 50) en mode Session.',
+  desc:[
+    'Duplication à la Ableton : <code>track.duplicate_clip_slot(scene_idx)</code> pour un clip (équivalent Ctrl+D — copie dans la scène suivante), <code>song.duplicate_scene(idx)</code> pour une scène.',
+    'Relâcher Duplicate annule toute capture de duplication en cours.'
+  ],
+  gestures:[
+    ['Duplicate + pad','Duplique le clip dans la scène suivante.'],
+    ['Duplicate + scene','Duplique la scène.'],
+    ['Shift + Duplicate','Rien en Session — en mode drum, double la boucle (une seule fois par appui).'],
+  ],
+  cells(){
+    const o=sessionBase();
+    o.l50=P(C.green,'Dupl.','Maintenu — LED pleine.');
+    fillGrid(o,()=>P(C.greenHalf,'Dup','Tap = dupliquer ce clip dans la scène suivante.'));
+    SCENES.forEach((cc,i)=>o['s'+i]=P(C.greenHalf,'Dup','Tap = dupliquer la scène.'));
+    return o;
+  }
+};
+
+MODES['session-overview']={
+  group:'Session', title:'Session — Overview',
+  activation:'<strong>Double-clic sur Session</strong> (CC 93) en mode Session.',
+  desc:[
+    'La grille 8x8 devient la vue d\'ensemble des pages de la session ring : chaque pad représente un bloc 8x8 de clips.',
+    'Pendant l\'overview, les flèches passent en navigation de page (page_up / page_down / page_left / page_right) et les scene launch sont avalés par le background.'
+  ],
+  gestures:[
+    ['Pad','Se déplacer sur cette page de la session.'],
+    ['↑ ↓ ← →','Navigation page à page.'],
+    ['Session','Retour au clip launch.'],
+  ],
+  cells(){
+    const o=sessionBase();
+    fillGrid(o,(x,y)=>P((x<2&&y<2)?C.white:C.clipDim,'',
+      'Bloc 8x8 de la session. Le bloc courant est en clair.'));
+    SCENES.forEach((cc,i)=>o['s'+i]=P(C.off,'','Avalé par le background pendant l\'overview.'));
+    o.t91=P(C.blueHalf,'←','Page précédente.');o.t92=P(C.blueHalf,'→','Page suivante.');
+    o.l80=P(C.blueHalf,'↑','Page au-dessus.');o.l70=P(C.blueHalf,'↓','Page en dessous.');
+    return o;
+  }
+};
+
+/* --------------------------------------------- 2. Sélecteurs de mode */
+MODES['selector']={
+  group:'Sélecteur', title:'Sélecteur de mode — Sequencer maintenu',
+  activation:'<strong>Maintenir Sequencer</strong> (CC 97). Fonctionne depuis n\'importe quel mode, avec ou sans Shift.',
+  desc:[
+    'À l\'appui, la <strong>colonne scene launch</strong> devient un sélecteur de mode : les scenes 1 à 5, de haut en bas, sont drum · drum 64 · drum 4 pistes · melodic · chord pads. Le mode courant s\'affiche en pleine intensité, les autres à mi-intensité. Les scenes 6 à 8 restent éteintes.',
+    'Taper une scene bascule immédiatement le mode — la grille change sous les doigts pendant le maintien, et le surlignage suit. Taper la scene du mode déjà actif renvoie en <strong>Session</strong> : c\'est la sortie à une main depuis n\'importe où.',
+    'Au relâchement : si un mode a été choisi, on y reste. Sinon on atterrit sur le <strong>séquenceur drum</strong> — un tap simple sur Sequencer garde donc exactement le comportement d\'avant.',
+    'Pendant le maintien, tous les consommateurs d\'appui scene (composant Session, chaque séquenceur, les chord pads, le toggle de pin) se court-circuitent : taper la scene 1 ne lance pas la scène 1 et ne bascule pas le pin de piste. Les séquenceurs suspendent aussi le repeint de leurs LED de colonne pour ne pas écraser le sélecteur.',
+    'Le bouton Sequencer reste blanc tant qu\'il est maintenu, même après un changement de mode.'
+  ],
+  gestures:[
+    ['Sequencer (tap)','Séquenceur drum — comportement inchangé.'],
+    ['Sequencer maintenu','Affiche le sélecteur sur la colonne scene.'],
+    ['… + scene 1','Drum Sequencer (32 pas).'],
+    ['… + scene 2','Drum 64 pas.'],
+    ['… + scene 3','Drum 4 pistes x 16 pas.'],
+    ['… + scene 4','Melodic Sequencer.'],
+    ['… + scene 5','Chord Pads.'],
+    ['… + scene du mode actif','Retour en Session.'],
+    ['Relâcher sans choisir','Séquenceur drum.'],
+  ],
+  notes:['Le panneau <strong>Shift + Session</strong> reste disponible et propose les mêmes cinq modes sur des zones 4x4 — cibles plus larges, mais geste à deux boutons.'],
+  cells(){
+    const o=sessionBase();
+    o.t97=P(C.white,'Sequen.','Maintenu — LED blanche tant que le sélecteur est ouvert.');
+    const sel=[['drum_sequence','Drum',C.amber,C.amberHalf],
+               ['drum_64_sequence','Drum 64',C.orange,C.orangeHalf],
+               ['drum_4_track_sequence','4 trk',C.yellow,C.yellowHalf],
+               ['melodic_sequence','Melodic',C.blue,C.blueHalf],
+               ['chord_mode','Chord',C.purple,'#5b3a6e']];
+    sel.forEach(([mode,label,bright,dim],i)=>{
+      const active=i===0;
+      o['s'+i]=P(active?bright:dim,label,
+        label+(active?' — mode courant (pleine intensité). Taper ici revient en Session.'
+                     :' — disponible (mi-intensité). Taper pour basculer.'));
+    });
+    for(let i=5;i<8;i++) o['s'+i]=P(C.off,'','Aucun mode sur ce slot — reste éteint pendant le maintien.');
+    fillGrid(o,()=>P(C.clipDim,'','La grille garde le mode courant pendant le maintien ; elle bascule dès qu\'une scene est tapée.'));
+    return o;
+  }
+};
+
+MODES['picker']={
+  group:'Sélecteur', title:'Sélecteur de mode — panneau Shift+Session',
+  title2:'', activation:'<strong>Shift + Session</strong>. Ré-appuyer sur Shift+Session annule et revient au mode précédent ; Session seul revient au clip launch.',
+  desc:[
+    'Cinq zones, une par mode logiciel. La zone du mode d\'où l\'on vient s\'affiche en pleine intensité, les autres à mi-intensité.',
+    'Tout se passe en Programmer mode : le panneau ne bascule jamais le firmware, il ne fait que changer le mode logiciel de la grille.',
+    'Le séquenceur drum principal reste accessible en un appui via le bouton <strong>Sequencer</strong> — le panneau sert surtout aux variantes.'
+  ],
+  gestures:[
+    ['Zone haut-gauche (4x4)','Melodic Sequencer'],
+    ['Zone haut-droite (4x4)','Chord Pads'],
+    ['Zone bas-gauche (4x4)','Drum Sequencer (32 pas)'],
+    ['Zone bas-droite haute (4x2)','Drum 64 pas'],
+    ['Zone bas-droite basse (4x2)','Drum 4 pistes'],
+  ],
+  cells(){
+    const o={};inert(o);transport(o);
+    o.t93=P(C.purple,'Picker','Shift+Session ferme le panneau. Session seul revient au clip launch.');
+    o.t97=P(C.grey,'Sequen.','Maintenir = sélecteur de mode sur la colonne scene.');
+    o.t90=P(C.white,'Shift','Maintenu pour ouvrir le panneau.');
+    o.t91=o.t92=P(C.off,'','');o.l80=o.l70=P(C.off,'','');
+    o.l60=P(C.off,'Clear','');o.l50=P(C.off,'Dupl.','');o.l40=P(C.off,'Quant.','');
+    TRK.forEach((cc,i)=>o['k'+i]=P(C.off,'',''));
+    FN.forEach((f,i)=>o['f'+i]=P(C.off,'',''));
+    SCENES.forEach((cc,i)=>o['s'+i]=P(C.off,'','Inutilisé par le panneau.'));
+    rangeGrid(o,0,3,0,3,()=>P(C.blue,'Melodic','Séquenceur mélodique 8x8 (hauteur x pas).'));
+    rangeGrid(o,4,7,0,3,()=>P(C.purple,'Chord','Pads d\'accords 8x8 (degrés x octaves).'));
+    rangeGrid(o,0,3,4,7,()=>P(C.amber,'Drum','Séquenceur drum 32 pas + sélecteur 16 sons + pages.'));
+    rangeGrid(o,4,7,4,5,()=>P(C.yellow,'Drum 64','Un son, 64 pas sur toute la grille.'));
+    rangeGrid(o,4,7,6,7,()=>P(C.blueHalf,'4 trk','4 sons x 16 pas.'));
+    return o;
+  }
+};
+
+/* -------------------------------------------------- 3. Drum sequencer */
+const DRUM_ARROWS={drum:true,actions:true,
+  upTip:'Pas maintenu → vélocité +8. Sinon → +12 demi-tons (pitch offset du sélecteur).',
+  downTip:'Pas maintenu → vélocité −8. Sinon → −12 demi-tons.',
+  leftTip:'Note maintenue → nudge −1/24 de temps. Sinon → Undo.',
+  rightTip:'Note maintenue → nudge +1/24 de temps. Sinon → Redo.'};
+
+function drumScenes(o){
+  o.s0=P(C.blueHalf,'Pin','Épingle / désépingle la piste contrôlée. Le bouton Session vire au bleu quand c\'est épinglé.');
+  o.s1=P(C.off,'','Libre — Capture vit sur Shift+Rec.');
+  o.s2=P(C.off,'','Libre — Quantize vit sur le bouton Quantise.');
+  o.s3=P(C.off,'','Libre — Duplicate page vit sur le bouton Duplicate.');
+  o.s4=P(C.cyan,'Cycle','Bascule le 4x4 bas-droite : sélecteur de pages ⇄ sélecteur de résolution.');
+  o.s5=P(C.off,'','Libre — Shift est un bouton physique sur le Pro.');
+  o.s6=P(C.off,'','Libre — Clear / Duplicate remplacent le special-shift du Mini.');
+  o.s7=P(C.off,'','Libre — il n\'y a pas de sous-mode stop/solo/mute sur le Pro.');
+  return o;
+}
+
+MODES['drum']={
+  group:'Drum Sequencer', title:'Drum Sequencer — vue de base',
+  activation:'Bouton <strong>Sequencer</strong> (CC 97), avec ou sans Shift. Ou zone « Drum » du panneau.',
+  desc:[
+    'Séquenceur pas-à-pas façon Push. La grille est découpée en trois zones : <strong>32 pas</strong> sur les 4 rangées du haut (<code>pas = y×8 + x</code>), <strong>16 sons</strong> en bas à gauche, <strong>16 pages</strong> en bas à droite.',
+    'Le sélecteur de sons suit la fenêtre du Drum Rack (<code>visible_drum_pads</code>) quand pitch_offset = 0, en layout clavier de batterie : le grave en bas à gauche. Les cases remplies prennent la couleur du pad Live, la case sélectionnée passe en blanc.',
+    'Les pas basculent <strong>au relâchement</strong>, pas à l\'appui : l\'appui sert d\'ancre de geste (allongement, vélocité, nudge). La couleur du pas encode la vélocité en 4 paliers ; le playhead passe par-dessus.',
+    'Résolution par défaut 1/16 · 32 pas par page · les clips créés de zéro font une page et sont lancés automatiquement (style Push 2).'
+  ],
+  gestures:[
+    ['Pas (tap)','Crée / supprime la note sur le son sélectionné.'],
+    ['Maintenir A + taper B','Allonge la note de A jusqu\'à B.'],
+    ['Maintenir A + taper B (2 notes)','Multi-sélection : les flèches éditent les deux notes.'],
+    ['Pas maintenu + ↑ ↓','Vélocité ±8 (bornée 1-127).'],
+    ['Pas maintenu + ← →','Nudge ±1/24 de temps (indépendant du pas).'],
+    ['Pas maintenu > 0,25 s','Le 4x4 bas-droite devient un sélecteur de vélocité 16 niveaux.'],
+    ['Son (4x4 bas-gauche)','Sélectionne le son et le joue (audition canal 1).'],
+    ['Page (tap)','Affiche la page.'],
+    ['Page (double-tap ≤0,35 s)','Scope la boucle sur cette page.'],
+    ['Page maintenue + autre page','Scope la boucle sur la plage.'],
+    ['Scene 5 (cycle)','Pages ⇄ résolutions.'],
+    ['Quantise','Quantifie les pas maintenus, sinon toutes les notes du son sélectionné.'],
+    ['Shift + Rec','Capture MIDI — resynchronise le clip et saute sur la page du contenu capturé.'],
+    ['Shift + Duplicate','Double la longueur de boucle et duplique son contenu (une fois par appui).'],
+  ],
+  notes:[
+    'L\'extension automatique de la boucle est conditionnée à <code>_clip_just_created</code> : sur un clip existant, ajouter une note au-delà de <code>loop_end</code> écrit bien la note mais ne touche pas à la boucle.',
+    'Les pads d\'audition vivent sur le <strong>canal MIDI 1</strong>, pas 0 — sur le canal 0 ils entreraient en collision avec les identifiants d\'origine des autres pads de la matrice.'
+  ],
+  cells(){
+    const o=seqBase(DRUM_ARROWS);drumScenes(o);
+    rangeGrid(o,0,7,0,3,(x,y)=>{
+      const s=y*8+x;
+      const on=[0,4,8,12,16,20,24,28].includes(s);
+      const play=s===8;
+      return P(play?C.white:(on?C.green:C.greyDim),''+(s+1),
+        'Pas '+(s+1)+' de la page (pas = y×8 + x). Bascule au relâchement.'+
+        (play?' ● Playhead.':(on?' Note active — la teinte encode la vélocité.':' Vide.')));
+    });
+    drumSelector(o,5);pagePads(o);
+    return o;
+  }
+};
+
+MODES['drum-grid']={
+  group:'Drum Sequencer', title:'Drum Sequencer — sélecteur de résolution',
+  activation:'<strong>Scene 5</strong> (slot cycle) bascule le 4x4 bas-droite de « pages » vers « résolutions ».',
+  desc:[
+    '16 résolutions : 8 binaires (1/4 → 1/512) puis 8 ternaires (suffixe <code>t</code>, facteur 2/3), rendues dans une teinte distincte.',
+    '<strong>Les notes existantes ne sont pas remappées</strong> : seul l\'alignement pas → temps change. Pages, scoping de boucle et longueur des clips créés se recalculent sur la nouvelle <code>page_length</code>.',
+    'La sélection courante est toujours rendue en blanc.'
+  ],
+  gestures:[
+    ['Cellule','Choisit la résolution (émet l\'événement de statut avec <code>is_triplet</code>).'],
+    ['Scene 5','Retour au sélecteur de pages.'],
+  ],
+  cells(){
+    const o=seqBase(DRUM_ARROWS);drumScenes(o);
+    o.s4=P(C.white,'Cycle','Mode « grid » actif — ré-appui pour revenir aux pages.');
+    rangeGrid(o,0,7,0,3,(x,y)=>{const s=y*8+x;
+      return P([0,4,8,12,16,20,24,28].includes(s)?C.green:C.greyDim,''+(s+1),'Pas '+(s+1)+'.');});
+    drumSelector(o,5);gridPads(o);
+    return o;
+  }
+};
+
+MODES['drum-shift']={
+  group:'Drum Sequencer', title:'Drum Sequencer — Shift maintenu',
+  activation:'Maintenir <strong>Shift</strong> (CC 90) dans un mode séquenceur.',
+  desc:[
+    'Shift retourne la grille de pas : au lieu de basculer des notes, elle devient un <strong>sélecteur de plage de boucle à l\'échelle du pas</strong>.',
+    'Un appui pose une borne, un second appui ferme la plage — la boucle est scopée de <code>min</code> à <code>max+1</code>.',
+    'Toute transition de Shift (appui comme relâchement) purge l\'état de maintien de la grille : un pas relâché après un changement de couche n\'écrit pas de note fantôme. La superposition vélocité est aussi désarmée tant que Shift est tenu.'
+  ],
+  gestures:[
+    ['Shift + pas','Pose une borne de plage de boucle.'],
+    ['Shift + 2e pas','Scope la boucle sur la plage.'],
+    ['Shift + Duplicate','Double la boucle (une fois par appui, puis « consommé » jusqu\'au relâchement).'],
+    ['Shift + Session','Panneau de sélection de mode.'],
+    ['Shift + Rec','Capture MIDI.'],
+    ['Shift + Rec Arm / Mute','Undo · Redo.'],
+  ],
+  cells(){
+    const o=seqBase(DRUM_ARROWS);drumScenes(o);
+    o.t90=P(C.white,'Shift','Maintenu.');
+    rangeGrid(o,0,7,0,3,(x,y)=>{const s=y*8+x;
+      const inRange=s>=4&&s<=13;
+      return P(inRange?C.cyan:C.blueHalf,''+(s+1),
+        'Borne de plage de boucle au pas '+(s+1)+'. Deux appuis = plage [min .. max+1].');});
+    drumSelector(o,5);pagePads(o);
+    o.l50=P(C.green,'Dupl.','Shift+Duplicate = double la boucle.');
+    return o;
+  }
+};
+
+MODES['drum-velocity']={
+  group:'Drum Sequencer', title:'Drum Sequencer — superposition vélocité',
+  activation:'Maintenir un <strong>pas</strong> plus de 0,25 s (Shift non tenu).',
+  desc:[
+    'Le 4x4 bas-droite se transforme en barre de vélocité 16 niveaux, du bas vers le haut : rangée du bas = niveaux 1-4, rangée du haut = 13-16.',
+    'Vélocité = <code>niveau × 8</code>, bornée 1-127 (niveau 16 → 127). Les cellules jusqu\'au niveau courant s\'allument sur une rampe froid → chaud, les suivantes restent atténuées.',
+    'Un pas <strong>vide</strong> maintenu arme quand même la barre : taper un niveau crée la note à la vélocité choisie (comportement Push).',
+    'Le délai de 0,25 s évite que les taps brefs — qui basculent le pas — fassent clignoter la barre.'
+  ],
+  gestures:[
+    ['Pad de niveau','Applique la vélocité aux notes maintenues (l\'appui agit, le relâchement est ignoré).'],
+    ['↑ ↓','Alternative fine : ±8 sur les notes maintenues.'],
+    ['Relâcher le pas','Désarme la barre, le 4x4 reprend son rôle pages / résolutions.'],
+  ],
+  cells(){
+    const o=seqBase(DRUM_ARROWS);drumScenes(o);
+    rangeGrid(o,0,7,0,3,(x,y)=>{const s=y*8+x;
+      const held=s===12;
+      return P(held?C.amber:([0,4,8,16,20,24,28].includes(s)?C.green:C.greyDim),''+(s+1),
+        held?'Pas maintenu (StepHeld, ambre) — ancre du geste.':'Pas '+(s+1)+'.');});
+    drumSelector(o,5);
+    const ramp=[C.blueHalf,C.blue,C.cyan,C.mint,C.green,C.greenHalf,C.yellowHalf,C.yellow,
+                C.amberHalf,C.amber,C.orangeHalf,C.orange,C.redHalf,C.red,C.pink,C.white];
+    rangeGrid(o,4,7,4,7,(x,y)=>{
+      const level=(7-y)*4+(x-4)+1;
+      const cur=10;
+      return P(level<=cur?ramp[level-1]:C.greyDim,'v'+(level*8>127?127:level*8),
+        'Niveau '+level+'/16 → vélocité '+Math.min(127,level*8)+'.'+
+        (level<=cur?' Allumé (≤ niveau courant).':' Atténué.'));
+    });
+    return o;
+  }
+};
+
+MODES['drum-clear']={
+  group:'Drum Sequencer', title:'Drum Sequencer — Clear maintenu (Delete)',
+  activation:'Maintenir <strong>Clear</strong> (CC 60) en mode drum_sequence.',
+  desc:[
+    'Clear remplace le « special shift » du Mini : tant qu\'il est maintenu, <em>chaque</em> appui de la grille est redirigé vers le dispatcher d\'action et la gestion normale est court-circuitée (pas de bascule de pas, pas de scoping, pas d\'audition).',
+    'La portée dépend de la zone touchée : un pas, un son entier, ou une page entière.',
+    'Seul <code>drum_sequence</code> implémente ces modificateurs — en drum 64, drum 4 pistes, melodic et chord, Clear et Duplicate sont éteints et inertes.'
+  ],
+  gestures:[
+    ['Clear + pas','Supprime la note à ce pas.'],
+    ['Clear + son','Supprime toutes les notes de cette hauteur dans tout le clip.'],
+    ['Clear + page','Supprime toutes les notes de cette page.'],
+    ['Clear + Duplicate','Clear est prioritaire.'],
+  ],
+  cells(){
+    const o=seqBase(DRUM_ARROWS);drumScenes(o);
+    o.l60=P(C.red,'Clear','Maintenu — LED pleine.');
+    rangeGrid(o,0,7,0,3,(x,y)=>P(C.redHalf,'Del','Supprime la note à ce pas.'));
+    rangeGrid(o,0,3,4,7,()=>P(C.red,'Del son','Supprime toutes les notes de cette hauteur dans le clip.'));
+    rangeGrid(o,4,7,4,7,()=>P(C.orangeHalf,'Del page','Supprime toutes les notes de cette page.'));
+    return o;
+  }
+};
+
+MODES['drum-duplicate']={
+  group:'Drum Sequencer', title:'Drum Sequencer — Duplicate maintenu',
+  activation:'Maintenir <strong>Duplicate</strong> (CC 50) en mode drum_sequence.',
+  desc:[
+    'Geste en deux taps : le 1er capture la source, le 2e applique. La source et la cible doivent être <strong>de même nature</strong> (pas → pas, son → son, page → page).',
+    'Un 2e tap sur une nature différente réinitialise simplement la capture — pas besoin d\'annuler explicitement. Un 2e tap sur la source elle-même relâche la capture sans rien faire.',
+    'Relâcher Duplicate annule toute capture en cours.'
+  ],
+  gestures:[
+    ['Duplicate + pas, pas','Copie la note d\'un pas vers un autre.'],
+    ['Duplicate + son, son','Copie toutes les notes d\'une hauteur vers une autre.'],
+    ['Duplicate + page, page','Copie une page entière vers une autre.'],
+    ['Shift + Duplicate','Double la boucle (consommé jusqu\'au relâchement : changer de mode ne le relance pas).'],
+  ],
+  cells(){
+    const o=seqBase(DRUM_ARROWS);drumScenes(o);
+    o.l50=P(C.green,'Dupl.','Maintenu — LED pleine.');
+    rangeGrid(o,0,7,0,3,(x,y)=>{const s=y*8+x;
+      return P(s===4?C.white:C.greenHalf,s===4?'SRC':'Dup',
+        s===4?'Source capturée (1er tap).':'2e tap = coller la note ici.');});
+    rangeGrid(o,0,3,4,7,()=>P(C.greenHalf,'Dup','1er tap = son source · 2e tap = son cible.'));
+    rangeGrid(o,4,7,4,7,()=>P(C.greenHalf,'Dup','1er tap = page source · 2e tap = page cible.'));
+    return o;
+  }
+};
+
+/* ------------------------------------------------ 4. Melodic sequencer */
+const MEL_ARROWS={actions:false,
+  upTip:'+12 demi-tons (transpose la fenêtre de hauteurs).',
+  downTip:'−12 demi-tons.',
+  leftTip:'Page précédente (nav_page −1).',
+  rightTip:'Page suivante (nav_page +1).'};
+
+function melScenes(o){
+  o.s0=P(C.cyan,'Chrom.','Bascule chromatique ⇄ gamme. Action directe sur le Pro (pas besoin de Shift) car Capture vit sur Shift+Rec. Ne déplace pas les notes existantes.');
+  o.s1=P(C.purpleHalf,'Scale','Cycle parmi 12 gammes : Major, Minor, Dorian, Mixolydian, Lydian, Phrygian, Locrian, Harmonic/Melodic Minor, Pentatonique maj/min, Blues.');
+  for(let i=2;i<6;i++) o['s'+i]=P(C.off,'','Libre.');
+  o.s6=P(C.cyan,'Cycle','Bascule le 4x4 bas-droite : hauteurs ⇄ résolutions.');
+  o.s7=P(C.off,'','Libre.');
+  return o;
+}
+
+MODES['melodic']={
+  group:'Melodic Sequencer', title:'Melodic Sequencer — vue de base',
+  activation:'Zone <strong>Melodic</strong> du panneau (Shift + Session).',
+  desc:[
+    'Grille hauteur × pas : <strong>8 hauteurs</strong> (une par rangée) × <strong>8 pas</strong> (une par colonne), donc 8 pas par page et 8 pages par clip créé.',
+    'Convention d\'axe : <code>degré = 7 − y</code>. La rangée du bas (y=7) est la fondamentale, la rangée du haut (y=0) est exactement une octave au-dessus.',
+    'Les gammes de moins de 7 notes (pentatoniques, blues) bouclent : un degré au-delà du dernier index repart à l\'octave suivante.',
+    'Comme sur le drum, les cellules basculent <strong>au relâchement</strong> — le maintien sert d\'ancre de geste (quantification ciblée).'
+  ],
+  gestures:[
+    ['Cellule','Crée / supprime la note (hauteur = rangée, temps = colonne).'],
+    ['← →','Page précédente / suivante.'],
+    ['↑ ↓','Transpose de ±12 demi-tons.'],
+    ['Scene 1','Chromatique ⇄ gamme (action directe sur le Pro).'],
+    ['Scene 2','Cycle de gamme.'],
+    ['Scene 7','Hauteurs ⇄ résolutions sur le 4x4 bas-droite.'],
+    ['Quantise','Quantifie les cellules maintenues, sinon toutes les notes du clip.'],
+    ['Shift + Rec','Capture MIDI.'],
+  ],
+  notes:['Clear et Duplicate sont éteints ici : <code>MelodicStepSequencerComponent</code> n\'expose pas <code>set_action_modifier()</code>.'],
+  cells(){
+    const o=seqBase(MEL_ARROWS);melScenes(o);
+    fillGrid(o,(x,y)=>{
+      const deg=7-y;
+      const on=(x===0&&y===7)||(x===2&&y===5)||(x===4&&y===3)||(x===6&&y===7);
+      return P(on?C.blue:(y===7?C.blueHalf:C.greyDim),on?'●':'',
+        'Pas '+(x+1)+' · degré '+deg+(y===7?' (fondamentale)':(y===0?' (octave)':''))+
+        '. Bascule au relâchement.');
+    });
+    return o;
+  }
+};
+
+MODES['melodic-drum']={
+  group:'Melodic Sequencer', title:'Melodic Sequencer — mode Drum Rack (8 lanes)',
+  activation:'<strong>Automatique</strong> : dès que la piste sélectionnée porte un Drum Rack. Aucun bouton à presser.',
+  desc:[
+    'Les 8 rangées cessent d\'être une gamme et deviennent <strong>8 lanes de batterie simultanées</strong> — une par pad du rack qui a réellement un device chargé. Les pads vides du rack sont ignorés : un kit de 9 sons remplit les rangées au lieu de s\'éparpiller sur un clavier chromatique.',
+    'Ordre clavier de batterie : le grave en bas (rangée 8), l\'aigu en haut. Les 8 colonnes restent les 8 pas de la page courante, et toutes les lanes partagent l\'axe temporel du clip.',
+    'Au-delà de 8 sons utilisés, la fenêtre défile : les flèches <strong>↑ ↓</strong> déplacent un banc de 8 lanes, les flèches <strong>← →</strong> une lane à la fois (sur le Pro, ← → servent à la navigation de page, donc le défilement fin passe par le Mini). Rien ne transpose ici — les rangées <em>sont</em> le rack.',
+    'Le pad sélectionné dans le rack Live s\'affiche dans la couleur Root : c\'est le repère pour savoir quelle lane est quoi. Les rangées au-delà de la fin du rack restent éteintes et ignorent les appuis.',
+    'Les slots chromatique et gamme s\'éteignent — ils n\'ont aucun sens sur un rack. Capture et Quantize ne changent pas.'
+  ],
+  gestures:[
+    ['Cellule','Crée / supprime la note du son de cette lane, au pas de la colonne.'],
+    ['↑ ↓','Défile d\'un banc de 8 lanes.'],
+    ['← →','Page précédente / suivante (Pro). Sur le Mini : une lane à la fois.'],
+    ['Quantise','Quantifie les cellules maintenues, sinon tout le clip.'],
+    ['Shift + Rec','Capture MIDI.'],
+    ['Scene 1 / 2','Éteints sur un rack — chromatique et gamme n\'ont pas de sens ici.'],
+  ],
+  notes:[
+    'Le mode bascule tout seul au changement de piste sélectionnée. Revenir sur une piste sans rack restaure les rangées de gamme.',
+    'La liste des pads utilisés est mise en cache : elle n\'est rebalayée qu\'au changement de piste, de clip ou de pad sélectionné dans le rack. Charger un son dans un pad vide sans le sélectionner peut demander une re-sélection de piste pour apparaître.'
+  ],
+  cells(){
+    const o=seqBase(MEL_ARROWS);melScenes(o);
+    o.s0=P(C.off,'','Éteint sur un Drum Rack — le toggle chromatique n\'a pas de sens.');
+    o.s1=P(C.off,'','Éteint sur un Drum Rack — le cycle de gamme n\'a pas de sens.');
+    o.l80=P(C.greenHalf,'↑','Banc de 8 lanes vers le haut (sons plus aigus).');
+    o.l70=P(C.greenHalf,'↓','Banc de 8 lanes vers le bas (sons plus graves).');
+    // 6 sons utilisés → les 2 rangées du haut sont mortes.
+    const kit=[['Kick',C.red],['Snare',C.amber],['Clap',C.orange],
+               ['CHat',C.yellow],['OHat',C.mint],['Perc',C.blue]];
+    fillGrid(o,(x,y)=>{
+      const index=7-y;                       // y=7 → lane 0 (le plus grave)
+      if(index>=kit.length)
+        return P(C.off,'','Rangée au-delà de la fin du rack : éteinte, appuis ignorés.');
+      const [name,hue]=kit[index];
+      const anchor=index===1;                // pad sélectionné dans Live
+      const on=(index+x)%3===0;
+      return P(on?hue:(anchor?C.cyan:C.greyDim),on?'●':'',
+        'Lane '+(index+1)+' — '+name+' · pas '+(x+1)+'.'+
+        (anchor?' ● Pad sélectionné dans le rack Live (couleur Root).':'')+
+        (on?' Note présente (teinte = vélocité).':' Vide.'));
+    });
+    return o;
+  }
+};
+
+MODES['melodic-shift']={
+  group:'Melodic Sequencer', title:'Melodic Sequencer — Shift maintenu',
+  activation:'Maintenir <strong>Shift</strong> (CC 90) en mode melodic.',
+  desc:[
+    'La <strong>rangée 0</strong> (en haut) est à double usage : sans Shift c\'est une rangée de hauteurs normale, avec Shift elle devient le sélecteur de pages (x = 0..6) plus le <strong>toggle Preview</strong> en (7, 0).',
+    'Les LED de la rangée 0 sont mutuellement exclusives — chaque routine n\'écrit que dans son propre mode, sinon les couleurs se mélangeaient visiblement.',
+    'En Preview, les cellules de la grille rejouent les hauteurs : les traductions d\'audition repartent de la rangée 1 quand Shift est tenu, et sont reconstruites à chaque transition de Shift.'
+  ],
+  gestures:[
+    ['Shift + rangée 0, x 0-6','Sélectionne la page.'],
+    ['Shift + (7, 0)','Active / désactive le Preview (audition des hauteurs).'],
+    ['Shift + Rec','Capture MIDI.'],
+    ['Shift + Session','Panneau de sélection de mode.'],
+  ],
+  cells(){
+    const o=seqBase(MEL_ARROWS);melScenes(o);
+    o.t90=P(C.white,'Shift','Maintenu.');
+    fillGrid(o,(x,y)=>{
+      if(y===0){
+        if(x===7) return P(C.pink,'Prev','Toggle Preview — les pads rejouent les hauteurs (audition canal 1).');
+        return P(x===0?C.white:C.blueHalf,'P'+(x+1),'Page '+(x+1)+'.');
+      }
+      const deg=7-y;
+      return P(y===7?C.blueHalf:C.greyDim,'','Pas '+(x+1)+' · degré '+deg+'.');
+    });
+    return o;
+  }
+};
+
+MODES['melodic-grid']={
+  group:'Melodic Sequencer', title:'Melodic Sequencer — sélecteur de résolution',
+  activation:'<strong>Scene 7</strong> (slot cycle) transforme les 16 cellules du 4x4 bas-droite en sélecteur de résolution.',
+  desc:[
+    'Même table que le drum : 8 binaires puis 8 ternaires. Seul le 4x4 bas-droite change de rôle — le reste de la grille garde son comportement de hauteurs.',
+    'La résolution ne remappe pas les notes existantes : elle change l\'alignement pas → temps et la longueur de page.'
+  ],
+  gestures:[
+    ['Cellule du 4x4','Choisit la résolution.'],
+    ['Reste de la grille','Comportement de hauteurs inchangé.'],
+    ['Scene 7','Retour au mode hauteurs.'],
+  ],
+  cells(){
+    const o=seqBase(MEL_ARROWS);melScenes(o);
+    o.s6=P(C.white,'Cycle','Mode « grid » actif.');
+    fillGrid(o,(x,y)=>P(y===7?C.blueHalf:C.greyDim,'','Pas '+(x+1)+' · degré '+(7-y)+'.'));
+    gridPads(o);
+    return o;
+  }
+};
+
+/* ------------------------------------------------------- 5. Variantes */
+MODES['drum64']={
+  group:'Variantes drum', title:'Drum 64 pas',
+  activation:'Zone <strong>Drum 64</strong> du panneau (Shift + Session).',
+  desc:[
+    'Toute la grille 8x8 est la ligne de temps d\'<strong>un seul son</strong> : 64 pas en ordre de lecture, <code>pas = y×8 + x</code> (rangée du haut = pas 1-8, rangée du bas = pas 57-64).',
+    'La matrice a trois états, cyclés par la scene 7 : <em>edit</em> (défaut), <em>loop_pick</em> (choix de boucle) et <em>grid_pick</em> (choix de résolution sur le 4x4 bas-droite).',
+    'Mêmes gestes de maintien que le drum principal : vélocité aux flèches, nudge, superposition vélocité 16 niveaux.'
+  ],
+  gestures:[
+    ['Pad','Crée / supprime la note à ce pas.'],
+    ['Pas maintenu + ↑ ↓','Vélocité ±8.'],
+    ['Pas maintenu + ← →','Nudge ±1/24 de temps ; sinon Undo / Redo.'],
+    ['Scene 7','Cycle edit → loop_pick → grid_pick.'],
+    ['Quantise','Quantifie la sélection.'],
+    ['Shift + Rec','Capture MIDI.'],
+  ],
+  notes:['Clear et Duplicate sont éteints : cette variante n\'expose pas <code>set_action_modifier()</code> ni <code>double_loop()</code>.'],
+  cells(){
+    const o=seqBase({drum:true,actions:false,
+      upTip:'Pas maintenu → vélocité +8, sinon +12 demi-tons.',
+      downTip:'Pas maintenu → vélocité −8, sinon −12 demi-tons.',
+      leftTip:'Nudge −1/24 si une note est maintenue, sinon Undo.',
+      rightTip:'Nudge +1/24 si une note est maintenue, sinon Redo.'});
+    o.s0=P(C.off,'','Libre (pas de pin dans cette variante).');
+    for(let i=1;i<6;i++) o['s'+i]=P(C.off,'','Libre.');
+    o.s6=P(C.cyan,'Cycle','Cycle edit → loop_pick → grid_pick.');
+    o.s7=P(C.off,'','Libre.');
+    fillGrid(o,(x,y)=>{const s=y*8+x;
+      const on=s%6===0;
+      return P(s===16?C.white:(on?C.green:C.greyDim),''+(s+1),
+        'Pas '+(s+1)+'/64 (pas = y×8 + x).'+(s===16?' ● Playhead.':''));});
+    return o;
+  }
+};
+
+MODES['drum4']={
+  group:'Variantes drum', title:'Drum 4 pistes × 16 pas',
+  activation:'Zone <strong>4 trk</strong> du panneau (Shift + Session).',
+  desc:[
+    'Quatre sons du Drum Rack affichés simultanément, chacun sur <strong>2 rangées = 16 pas</strong>. Layout clavier de batterie : le son le plus grave en bas.',
+    'Dans chaque bloc de 2 rangées, la rangée du haut porte les pas 1-8 et celle du bas les pas 9-16.',
+    'Toutes les pistes partagent l\'axe temporel du clip : une même colonne sur deux sons différents déclenche au même instant, sur des hauteurs différentes. Il s\'agit d\'un seul clip MIDI contenant les notes des 4 hauteurs visibles.'
+  ],
+  gestures:[
+    ['Pad','Crée / supprime la note du son de ce bloc, au pas correspondant.'],
+    ['Pas maintenu + ↑ ↓','Vélocité ±8 — le seul contrôle de vélocité dans ce mode.'],
+    ['Pas maintenu + ← →','Nudge ; sinon Undo / Redo.'],
+    ['Scene 7','Cycle edit → loop_pick → grid_pick.'],
+    ['Quantise','Quantifie la sélection.'],
+  ],
+  notes:['<strong>Pas de superposition vélocité ici</strong>, contrairement aux autres séquenceurs. La barre 16 niveaux vit sur les rangées 6-7, qui dans cette disposition sont la lane complète de la piste 0 : l\'armer effaçait une piste entière (maintenir un pas sur la piste 3 faisait disparaître la piste 0). La vélocité reste sur les flèches ↑ ↓.'],
+  cells(){
+    const o=seqBase({drum:true,actions:false,
+      upTip:'Pas maintenu → vélocité +8, sinon +12 demi-tons.',
+      downTip:'Pas maintenu → vélocité −8, sinon −12 demi-tons.',
+      leftTip:'Nudge si note maintenue, sinon Undo.',
+      rightTip:'Nudge si note maintenue, sinon Redo.'});
+    for(let i=0;i<6;i++) o['s'+i]=P(C.off,'','Libre.');
+    o.s6=P(C.cyan,'Cycle','Cycle edit → loop_pick → grid_pick.');
+    o.s7=P(C.off,'','Libre.');
+    const hue=[C.blue,C.green,C.amber,C.purple];
+    fillGrid(o,(x,y)=>{
+      const track=3-Math.floor(y/2);            // y 0,1 → son 3 ; y 6,7 → son 0
+      const step=(y%2)*8+x+1;
+      const on=(track+step)%5===0;
+      return P(on?hue[track]:C.greyDim,'S'+track+'·'+step,
+        'Son '+track+(track===0?' (le plus grave — typiquement le kick)':'')+
+        ' · pas '+step+'/16. Rangée du haut du bloc = pas 1-8, rangée du bas = 9-16.');
+    });
+    return o;
+  }
+};
+
+/* ---------------------------------------------------------- 6. Chord */
+MODES['chord']={
+  group:'Chord Pads', title:'Chord Pads',
+  activation:'Zone <strong>Chord</strong> du panneau (Shift + Session).',
+  desc:[
+    'Roue d\'accords 8x8 : les <strong>colonnes</strong> sont les degrés de la gamme (I, ii, iii, IV, V, vi, vii°, I+8ve), les <strong>rangées</strong> des décalages d\'octave. La rangée 4 est l\'ancre non transposée.',
+    'Chaque pad n\'émet qu\'<strong>une seule note</strong> — la fondamentale de l\'accord — via la traduction d\'audition 1-1. C\'est la seule voie qu\'un script Remote a d\'un pad vers une piste Live.',
+    'Pour obtenir un vrai accord, deux chemins : poser l\'effet MIDI <strong>Chord</strong> de Live sur la piste armée (voicings à intervalles fixes, simple, rien à installer), ou écouter l\'événement <code>CHORD_TRIGGERED</code> (payload <code>degree</code>, <code>root_pitch</code>, <code>chord_pitches</code>, <code>velocity</code>) depuis un futur device M4L qui jouera des accords réellement diatoniques.',
+    'Palette volontairement distincte des séquenceurs : ambre pour les degrés 0 et 7 (tonique et octave), bleu pour la tierce et la quinte diatoniques, vert atténué pour les autres notes de la gamme. Hors rangée d\'ancrage, chaque teinte passe en variante atténuée pour que l\'œil retrouve la rangée 4.'
+  ],
+  gestures:[
+    ['Pad','Joue la fondamentale du degré (colonne), transposée par la rangée.'],
+    ['↑ ↓','±1 octave.'],
+    ['← →','±1 demi-ton.'],
+    ['Scene 1','Capture MIDI (ici au niveau du morceau).'],
+    ['Scene 2','Cycle de tonalité.'],
+    ['Scene 3','Cycle de gamme.'],
+    ['Scene 4','Cycle de type d\'accord.'],
+    ['Scene 5','Cycle de renversement (4 positions).'],
+  ],
+  notes:['Quantise est éteint en mode Chord : le composant n\'expose pas <code>quantize_selected()</code>. Le pin de piste (scene 1 des séquenceurs) est également désactivé ici — la scene 1 sert à la capture.'],
+  cells(){
+    const o=seqBase({actions:false,quantize:false,
+      upTip:'+1 octave (pitch offset).',downTip:'−1 octave.',
+      leftTip:'−1 demi-ton.',rightTip:'+1 demi-ton.'});
+    o.s0=P(C.pink,'Capture','Capture MIDI.');
+    o.s1=P(C.cyan,'Key','Cycle de tonalité (12 tons).');
+    o.s2=P(C.purpleHalf,'Scale','Cycle de gamme.');
+    o.s3=P(C.blueHalf,'Type','Cycle de type d\'accord.');
+    o.s4=P(C.greenHalf,'Inv','Cycle de renversement (0 = état fondamental, 1-3 = renversements).');
+    o.s5=P(C.off,'','Libre.');o.s6=P(C.off,'','Libre.');o.s7=P(C.off,'','Libre.');
+    const deg=['I','ii','iii','IV','V','vi','vii°','I+8'];
+    fillGrid(o,(x,y)=>{
+      const anchor=y===4;
+      let col;
+      if(x===0||x===7) col=anchor?C.amber:C.amberHalf;
+      else if(x===2||x===4) col=anchor?C.blue:C.blueHalf;
+      else col=anchor?C.greenHalf:'#12301f';
+      const shift=(4-y);
+      return P(col,deg[x]+(shift?(shift>0?'+'+shift:''+shift):''),
+        'Degré '+deg[x]+' · décalage '+(shift>0?'+':'')+shift+' octave(s).'+
+        (anchor?' ● Rangée d\'ancrage (non transposée).':'')+
+        ' Un seul pad = une seule note (la fondamentale).');
+    });
+    return o;
+  }
+};
+
+/* =========================================================================
+   Rendu
+   ====================================================================== */
+const ORDER=['hardware','session','session-mixer','session-shift','session-clear',
+  'session-duplicate','session-overview','selector','picker','drum','drum-grid','drum-shift',
+  'drum-velocity','drum-clear','drum-duplicate','melodic','melodic-drum',
+  'melodic-shift','melodic-grid',
+  'drum64','drum4','chord'];
+
+const SUBS={
+  'hardware':'notes, CC, ports MIDI','session':'clip launch + rangée mixer',
+  'session-mixer':'Arm / Mute / Solo / Stop','session-shift':'copier / coller',
+  'session-clear':'supprimer clip / scène','session-duplicate':'dupliquer clip / scène',
+  'session-overview':'double-clic Session','selector':'maintenir Sequencer',
+  'picker':'Shift + Session',
+  'drum':'32 pas + 16 sons + 16 pages','drum-grid':'16 résolutions',
+  'drum-shift':'plage de boucle au pas','drum-velocity':'16 niveaux',
+  'drum-clear':'pas / son / page','drum-duplicate':'geste en 2 taps',
+  'melodic':'8 hauteurs x 8 pas','melodic-drum':'8 lanes de batterie',
+  'melodic-shift':'pages + preview',
+  'melodic-grid':'16 résolutions','drum64':'1 son, 64 pas',
+  'drum4':'4 sons x 16 pas','chord':'degrés x octaves'};
+
+function lum(hex){
+  const r=parseInt(hex.slice(1,3),16),g=parseInt(hex.slice(3,5),16),b=parseInt(hex.slice(5,7),16);
+  return (0.299*r+0.587*g+0.114*b)/255;
+}
+function padEl(cell,round){
+  const d=document.createElement('div');
+  d.className='pad'+(round?' round':'');
+  if(!cell){d.className+=' empty';return d;}
+  d.style.background=cell.c;
+  d.style.color=lum(cell.c)>0.55?'rgba(0,0,0,.78)':'rgba(255,255,255,.86)';
+  if(cell.c===C.off||cell.c===C.greyDim) d.style.color='#4a5056';
+  d.textContent=cell.l||'';
+  if(cell.t) d.dataset.tip=cell.t;
+  return d;
+}
+function renderLP(cells){
+  const wrap=document.createElement('div');wrap.className='lp-wrap';
+  const lp=document.createElement('div');lp.className='lp';
+  const at=(k)=>cells[k];
+  // ligne 0
+  lp.appendChild(padEl(at('t90'),true));
+  TOP.forEach(([cc])=>lp.appendChild(padEl(at('t'+cc),true)));
+  lp.appendChild(padEl(null));
+  // lignes 1-8
+  for(let y=0;y<8;y++){
+    lp.appendChild(padEl(at('l'+LEFT[y][0]),true));
+    for(let x=0;x<8;x++) lp.appendChild(padEl(at('g'+x+y),false));
+    lp.appendChild(padEl(at('s'+y),true));
+  }
+  // ligne 9 — track select
+  lp.appendChild(padEl(null));
+  for(let i=0;i<8;i++) lp.appendChild(padEl(at('k'+i),true));
+  lp.appendChild(padEl(null));
+  // ligne 10 — track control
+  lp.appendChild(padEl(null));
+  for(let i=0;i<8;i++) lp.appendChild(padEl(at('f'+i),true));
+  lp.appendChild(padEl(null));
+  wrap.appendChild(lp);
+  const cap=document.createElement('div');cap.className='lp-caption';
+  cap.innerHTML='Survoler un bouton ou un pad pour le détail. Ronds = boutons CC · carrés = pads (notes 11-88).';
+  wrap.appendChild(cap);
+  return wrap;
+}
+function renderMode(key){
+  const m=MODES[key];const main=document.getElementById('main');
+  main.innerHTML='';
+  const h=document.createElement('div');
+  h.innerHTML='<div class="crumb">'+m.group+'</div><h1>'+m.title+'</h1>'+
+              '<div class="activation">'+m.activation+'</div>';
+  main.appendChild(h);
+  const row=document.createElement('div');row.className='row';
+  const left=document.createElement('div');
+  left.appendChild(renderLP(m.cells()));
+  const lg=document.createElement('div');lg.className='legend';
+  lg.innerHTML=
+    '<div><span class="sw" style="background:'+C.off+'"></span>LED éteinte — bouton réservé ou inerte dans ce mode</div>'+
+    '<div><span class="sw" style="background:'+C.whiteHalf+'"></span>Mi-intensité — disponible</div>'+
+    '<div><span class="sw" style="background:'+C.white+'"></span>Pleine intensité — actif / maintenu / sélectionné</div>';
+  left.appendChild(lg);
+  row.appendChild(left);
+  const info=document.createElement('div');info.className='info';
+  let html='<h3>Ce que fait ce mode</h3>';
+  m.desc.forEach(p=>html+='<p>'+p+'</p>');
+  if(m.gestures&&m.gestures.length){
+    html+='<h3>Gestes</h3><div class="tbl"><table><thead><tr><th>Geste</th><th>Effet</th></tr></thead><tbody>';
+    m.gestures.forEach(([g,d])=>html+='<tr><td>'+g+'</td><td>'+d+'</td></tr>');
+    html+='</tbody></table></div>';
+  }
+  if(m.notes&&m.notes.length){
+    html+='<h3>À savoir</h3>';
+    m.notes.forEach(n=>html+='<div class="note"><strong>⚠</strong> '+n+'</div>');
+  }
+  info.innerHTML=html;
+  row.appendChild(info);
+  main.appendChild(row);
+  document.querySelectorAll('.mode-btn').forEach(b=>
+    b.classList.toggle('active',b.dataset.key===key));
+  location.hash=key;
+  main.scrollTop=0;window.scrollTo(0,0);
+}
+function buildNav(){
+  const nav=document.getElementById('nav');let last=null;
+  ORDER.forEach(k=>{
+    const m=MODES[k];
+    if(m.group!==last){
+      const g=document.createElement('div');g.className='group-title';g.textContent=m.group;
+      nav.appendChild(g);last=m.group;
+    }
+    const b=document.createElement('button');
+    b.className='mode-btn';b.dataset.key=k;
+    b.innerHTML=m.title.replace(/^.*— /,'')+'<span class="sub">'+(SUBS[k]||'')+'</span>';
+    b.onclick=()=>renderMode(k);
+    nav.appendChild(b);
+  });
+}
+buildNav();
+renderMode(ORDER.includes(location.hash.slice(1))?location.hash.slice(1):'hardware');
+</script>
+</body>
+</html>

@@ -4,6 +4,9 @@
 # Therefore these dicts live here, NOT in device_profile.py.
 from __future__ import absolute_import, print_function, unicode_literals
 
+from novation import sysex
+
+from .device_profile import DEVICE_SYSEX_ID
 from .programmer_mode import NOTE_ON_STATUS, PROGRAMMER_LED_CHANNEL
 
 
@@ -143,6 +146,101 @@ VELOCITY_LEVEL_PALETTE = (
     3,   # 16 WHITE (peak)
 )
 VELOCITY_LEVEL_DIM = 1  # DARK_GREY, used for pads above the current level.
+
+
+# --------------------------------------------------------------- RGB SysEx
+#
+# Beyond the 128-index firmware palette, Launchpads accept an explicit RGB
+# value per LED:
+#
+#   F0h 00h 20h 29h 02h <device id> 03h  <spec> [<spec> ...]  F7h
+#   <spec> = 03h <LED index> <R> <G> <B>        (0-127 per channel)
+#
+# Two reasons to use it over the palette:
+#   - The palette only offers 4 shades per hue (indices 4n..4n+3) and they are
+#     unevenly spaced, so a monotonic velocity ramp of more than ~3 steps is
+#     not possible. RGB gives as many even shades of one hue as we want.
+#   - Several specs ride in ONE message, so a full grid repaint is a single
+#     SysEx instead of 64 Note On messages.
+#
+# The device id comes from the overlay's device_profile (13 Mini / 14 Pro);
+# install.sh assembles the right one next to this file.
+#
+# NOTE: command byte 03h is shared with print-to-clip (`… 0Eh 03h <v> F7h`),
+# which is a DEVICE→HOST message the Pro only sends when print-to-clip is
+# enabled. Our elements never create that element, so there is no collision.
+RGB_SYSEX_COMMAND_BYTE = 3
+RGB_SPEC_TYPE = 3
+RGB_MAX = 127
+# The reference caps a message at 106 specs; a full 8x8 grid is well under.
+RGB_MAX_SPECS_PER_MESSAGE = 64
+
+
+# Neutral greys for everything that is NOT content. Keeping "absence" on a
+# grey ramp and "presence" on the clip hue is what makes the surface readable
+# at a glance: a coloured pad always means something is there.
+GREY_EMPTY = (4, 4, 4)        # nothing here
+GREY_DIM = (12, 12, 12)       # structural marker (beat, available option)
+GREY_MID = (30, 30, 30)       # landmark (root row, ternary option)
+GREY_BRIGHT = (64, 64, 64)    # playhead over empty space
+RGB_WHITE = (127, 127, 127)   # "now" / selected / held
+RGB_BLACK = (0, 0, 0)
+
+
+def rgb_shades(color_int, levels, floor=0.10):
+    """`levels` evenly-spaced shades of one colour, darkest first.
+
+    `color_int` is a Live 0xRRGGBB value (a clip or track colour). It is first
+    normalised so its brightest channel is full — otherwise an already-dark
+    clip colour would scale down into indistinguishable near-black — then
+    scaled from `floor` to 1.0 across the levels. Output channels are 0-127,
+    the Launchpad's RGB range.
+    """
+    r = (color_int >> 16) & 255
+    g = (color_int >> 8) & 255
+    b = color_int & 255
+    peak = max(r, g, b)
+    if peak <= 0:
+        return [(0, 0, 0)] * max(1, levels)
+    r, g, b = (c * 255.0 / peak for c in (r, g, b))
+    if levels <= 1:
+        factors = [1.0]
+    else:
+        factors = [floor + (1.0 - floor) * i / (levels - 1)
+                   for i in range(levels)]
+    shades = []
+    for f in factors:
+        shades.append(tuple(
+            max(0, min(RGB_MAX, int(round(c * f * RGB_MAX / 255.0))))
+            for c in (r, g, b)))
+    return shades
+
+
+def rgb_sysex_message(device_sysex_id, specs):
+    """Build one LED-lighting SysEx from `specs` = [(led_index, (r, g, b)), …]."""
+    body = ()
+    for index, (r, g, b) in specs:
+        body += (RGB_SPEC_TYPE, index & 127,
+                 max(0, min(RGB_MAX, int(r))),
+                 max(0, min(RGB_MAX, int(g))),
+                 max(0, min(RGB_MAX, int(b))))
+    return (sysex.STD_MSG_HEADER + (device_sysex_id, RGB_SYSEX_COMMAND_BYTE)
+            + body + (sysex.SYSEX_END_BYTE,))
+
+
+def send_pad_rgb(parent, specs):
+    """Write `specs` = [(led_index, (r, g, b)), …] in as few messages as the
+    per-message cap allows. Silently no-ops if the parent can't send (teardown).
+    """
+    if not specs:
+        return
+    for start in range(0, len(specs), RGB_MAX_SPECS_PER_MESSAGE):
+        chunk = specs[start:start + RGB_MAX_SPECS_PER_MESSAGE]
+        try:
+            parent._send_midi(rgb_sysex_message(DEVICE_SYSEX_ID, chunk),
+                              optimized=False)
+        except Exception:
+            return
 
 
 def send_pad_color(parent, button, color, palette):

@@ -741,20 +741,28 @@ class DrumStep4TrackSequencerComponent(Component):
     # --- Velocity overlay (step-hold gesture, rows 6-7) ----------------
 
     def _velocity_overlay_should_show(self):
-        """Active once the hold-arm task has fired AND shift is NOT held."""
-        return self._velocity_overlay_armed and not self._device_shift_held
+        """Always False in this layout.
+
+        The 16-level bar lives on rows 6-7, which in the 4-track layout are
+        NOT spare space — they are track 0's complete 16-step lane. Arming it
+        blanked a whole track and turned its steps into velocity cells, so
+        holding a step on track 3 made track 0 disappear. The other
+        sequencers can afford the bar because rows 6-7 are just more steps of
+        the same lane; here there is nowhere to put it. Velocity editing
+        stays on the Up/Down arrows (adjust_held_velocity, ±8 per press),
+        which is the documented gesture anyway.
+
+        Kept as a single predicate rather than ripping out the overlay code:
+        the machinery is shared with the sister sequencers and stays ready if
+        a spare surface (a scene-button page, say) ever hosts the bar here."""
+        return False
 
     def _arm_velocity_overlay(self):
-        if not self.is_enabled():
-            return
-        if self._device_shift_held:
-            return
-        if not self._held_step_pads:
-            return
-        if self._velocity_overlay_armed:
-            return
-        self._velocity_overlay_armed = True
-        self.update()
+        # Never arms — see _velocity_overlay_should_show. The task is still
+        # scheduled by the press path (shared code with the sister
+        # sequencers); this keeps it a no-op instead of special-casing every
+        # restart() call site.
+        return
 
     def _disarm_velocity_overlay(self):
         self._velocity_overlay_arm_task.kill()

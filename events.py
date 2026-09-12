@@ -48,6 +48,10 @@ class Event(object):
     MELODIC_SCALE_CHANGED   = "melodic_scale_changed"   # scale_index=int, scale_name=str
     MELODIC_CHROMATIC_MODE  = "melodic_chromatic_mode"  # on=bool
     MELODIC_PREVIEW_MODE    = "melodic_preview_mode"    # on=bool
+    MELODIC_DRUM_MODE       = "melodic_drum_mode"       # active=bool, count=int (used pads in the rack)
+    MELODIC_DRUM_LANES      = "melodic_drum_lanes"      # first=int (1-based), last=int (1-based, inclusive), total=int
+    MELODIC_LANE_VELOCITY_VIEW = "melodic_lane_velocity_view" # name=str (lane label)
+    MELODIC_LANE_VELOCITY   = "melodic_lane_velocity"   # name=str, step=int (1-based), velocity=int (1..127)
     MELODIC_NAV_CHANGED     = "melodic_nav_changed"     # label=str, page=int (1-based), octave=int, semitone=int
     MELODIC_NOTES_QUANTIZED = "melodic_notes_quantized" # count=int (notes moved), scope="selected"|"clip_all", grid=str
     MELODIC_BOTTOM_RIGHT_MODE = "melodic_bottom_right_mode" # mode="pitch"|"grid"

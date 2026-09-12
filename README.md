@@ -131,6 +131,44 @@ Page/loop behavior:
 - Double-tap a page pad to scope the clip loop to that single page.
 - Hold one page pad and press another page pad to scope the loop across the page range, Push-style.
 
+**On a Drum Rack track the melodic sequencer becomes an 8-lane drum sequencer.** It
+detects the rack on the selected track and switches automatically — no toggle:
+
+- Each row is one drum pad **that actually has a device loaded**; empty rack pads are
+  skipped entirely, so a 9-sound kit fills the rows instead of scattering across a
+  chromatic keyboard.
+- Lowest pitch on the bottom row, like every other drum view in this script.
+- All 8 lanes are editable at once and share the clip time axis.
+- Racks with more than 8 used sounds scroll: octave arrows move a bank of 8, semitone
+  arrows move one lane at a time. Nothing transposes — the rows *are* the rack.
+- The pad selected in Live's rack is highlighted, so you can tell which lane is which.
+- Rows past the end of the rack stay dark and ignore presses.
+- Chromatic and scale controls go dark (they mean nothing here); Capture and Quantize
+  are unaffected.
+
+**Hold a scene button to edit that lane's velocities.** The scene button sits at the end
+of its row, so scene 3 edits row 3. While held, the grid becomes that lane's velocity
+profile: one column per step of the current page, a bar growing from the bottom over 8
+levels. Tap at a height to set the velocity; tap an empty column to create the note at
+that velocity. Release to go back. A quick tap still performs the scene slot's own action
+(cycle, Capture, Quantize) — only a hold opens the view. Works in scale mode too.
+
+On the Mini, scene 8 is the shift button, so the bottom row's lane view is only reachable
+on the Pro; hold a step and use the 16-level bar for that row instead.
+
+**The whole melodic surface is shaded in the clip's own colour, Push-style** (Launchpad
+Pro MK3 only). One rule, everywhere:
+
+- **The clip's colour, shaded** means content or a chosen value: a note (shade = velocity),
+  the part of the timeline inside the loop, the current page, the selected step
+  resolution, Preview when it is on.
+- **Grey** means nothing there or simply available: empty steps, beat markers, the anchor
+  row, unselected options.
+- **White** means *now*: the playhead over a note, a held pad, a loop range anchor.
+
+So a coloured pad always means something is there. Recolour the clip in Live and the whole
+grid follows. The Mini keeps its previous colour scheme.
+
 ### Sequencer Side Controls
 
 In Drum and Melodic sequencer modes, the right-side scene buttons become navigation controls:
@@ -254,11 +292,15 @@ Keeping both surfaces assigned can cause hardware-mode collisions.
 The Pro script stays in **Programmer mode** while it controls Live. All sequencer
 notes belong to Ableton MIDI clips; Live handles playback.
 
-- **Sequencer** — directly opens the Ableton drum step sequencer (also with Shift).
+- **Sequencer** — hold to turn the scene-launch column into a mode selector: scenes 1-5
+  are drum / drum 64 / drum 4-track / melodic / chord pads (active mode bright, others
+  half). Tap a scene to switch; tap the active mode's scene to go back to Session.
+  Release without picking anything and you land on the drum step sequencer, so a plain
+  tap still works as before. Shift changes nothing here.
 - **Session** — returns to clip launch. Releasing it keeps the current mode;
   double-click in Session still opens the overview.
-- **Shift+Session** — opens/closes the software-mode panel. The existing melodic,
-  chord-pad and alternate drum views remain available there.
+- **Shift+Session** — opens/closes the software-mode panel (grid overlay). Same five
+  modes as the hold-Sequencer column, with bigger targets.
 - **Note / Chord / Custom / Projects** — reserved, consumed by the script and unlit.
   They do not open the Launchpad firmware modes or settings pages.
 - **Shift** — copy/paste in Session; the sequencer's secondary controls in Drums.
@@ -313,7 +355,7 @@ Shared components live at the repo root; device-specific modules live in `mini/`
 | `clip_copy_component.py` | Clip clipboard management and paste validation |
 | `scene_copy_component.py` | Scene clipboard management with full property duplication |
 | `drum_step_sequencer.py` | Push-style drum sequencer, drum pad preview, page scoping |
-| `melodic_step_sequencer.py` | Melodic sequencer, preview mode, pitch/page navigation |
+| `melodic_step_sequencer.py` | Melodic sequencer, preview mode, pitch/page navigation, 8-lane drum-rack mode |
 | `clip_slot_with_copy.py` | Shift-key detection on individual clip slots |
 | `session_with_copy.py` | Extended session and scene components with copy-paste integration |
 | `notifying_background.py` | Background component that emits events on mode button changes |

@@ -141,6 +141,8 @@ class Colors(object):
         Playhead = Rgb.GREEN
         PlayheadActive = Rgb.WHITE
         NoClip = Rgb.DARK_GREY
+        # Scene button of the row whose velocity view is currently held open.
+        LaneVelocity = Rgb.WHITE
 
         class Preview(object):
             Off = Rgb.GREEN_HALF

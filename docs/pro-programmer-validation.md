@@ -27,6 +27,11 @@ validation exhaustive de tous les scénarios ci-dessous.
 2. Sur une piste MIDI avec Drum Rack, sélectionner un clip, puis appuyer sur
    Sequencer : 32 pas en haut, 16 sons en bas à gauche, pages en bas à droite.
    Écrire quelques pas et vérifier les notes dans le clip Live ainsi que sa lecture.
+2b. Maintenir Sequencer : les scenes 1 à 5 s'allument (drum, drum 64, drum 4 pistes,
+   melodic, chord), le mode courant en pleine intensité. Taper une scene bascule le mode
+   sans lancer de scène ni basculer le pin de piste. Taper la scene du mode actif renvoie
+   en Session. Relâcher sans rien taper doit atterrir sur le séquenceur drum. Vérifier
+   qu'un tap simple sur Sequencer se comporte comme avant.
 3. Revenir avec Session, puis Sequencer, 30 fois. Maintenir Session puis la relâcher :
    le mode ne doit pas revenir automatiquement au séquenceur.
 4. Tester Shift+Sequencer, puis Note/Chord/Custom/Projects seuls et avec Shift,

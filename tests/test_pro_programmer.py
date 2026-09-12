@@ -71,6 +71,27 @@ class Button:
         return self.held
 
 
+class SceneButton(Button):
+    """Scene-launch button stub: records LED writes and temporary listeners."""
+
+    def __init__(self):
+        self.light = None
+        self.listeners = []
+
+    def set_light(self, color):
+        self.light = color
+
+    def add_value_listener(self, listener):
+        self.listeners.append(listener)
+
+    def remove_value_listener(self, listener):
+        self.listeners.remove(listener)
+
+    def press(self):
+        for listener in list(self.listeners):
+            listener(127)
+
+
 class Modes:
     def __init__(self, surface):
         self.surface = surface
@@ -92,9 +113,16 @@ class ProgrammerModesTest(unittest.TestCase):
         s = self.surface = Surface.__new__(Surface)
         s._picker_return_mode = None
         s._duplicate_consumed = False
+        s._selector_held = False
+        s._mode_selected_during_hold = False
+        s._mode_selector_listeners = []
         s._elements = SimpleNamespace(**{name + "_button": Button()
             for name in ("shift", "clear", "duplicate")})
-        for name in ("_transport", "_drum_step_sequencer", "_drum_64_step_sequencer",
+        s._elements.sequencer_mode_button = Button()
+        self.scenes = [SceneButton() for _ in range(8)]
+        s._elements.scene_launch_buttons_raw = self.scenes
+        for name in ("_transport", "_session", "_drum_step_sequencer",
+                     "_drum_64_step_sequencer",
                      "_drum_4_track_step_sequencer", "_melodic_step_sequencer",
                      "_chord_pad_mode", "_mode_picker", "_edit_mode",
                      "_clip_copy", "_scene_copy", "_session_modes"):
@@ -104,7 +132,7 @@ class ProgrammerModesTest(unittest.TestCase):
                      "_set_mode_button_lights", "_update_modifier_leds",
                      "_update_mixer_function_leds", "set_controlled_track",
                      "release_controlled_track", "set_feedback_channels",
-                     "_clear_inert_button_leds"):
+                     "_clear_inert_button_leds", "_send_programmer_cc"):
             setattr(s, name, Mock())
         s._send_midi = Mock()
         s.song = SimpleNamespace(view=SimpleNamespace(selected_track=object()))
@@ -118,28 +146,71 @@ class ProgrammerModesTest(unittest.TestCase):
             "_Launchpad_Pro_MK3__on_" + button + "_button_value")
         handler(127 if held else 0)
 
+    def tap(self, button):
+        """Press + release — Sequencer commits its mode on release now that
+        the press opens the hold-to-select scene column."""
+        self.event(button, True)
+        self.event(button, False)
+
     def test_sequencer_and_shift_sequencer_edit_live_without_firmware_messages(self):
         for shift in (False, True):
             self.event("shift", shift)
             self.event("sequencer_mode", True)
+            # The press only opens the selector; the mode commits on release.
+            self.assertEqual(self.surface._main_modes.selected_mode, "session")
+            self.event("sequencer_mode", False)
             self.assertEqual(self.surface._main_modes.selected_mode, "drum_sequence")
             self.surface._drum_step_sequencer.set_device_shift_held.assert_called_with(shift)
-            self.event("sequencer_mode", False)
             self.surface._main_modes.selected_mode = "session"
         self.surface._send_midi.assert_not_called()
 
-    def test_session_release_cannot_restore_a_previous_mode(self):
+    def test_holding_sequencer_lights_the_scene_column_as_a_mode_selector(self):
         self.event("sequencer_mode", True)
+        self.assertEqual(self.scenes[0].light, "Mode.Selector.DrumDim")
+        self.assertEqual(self.scenes[3].light, "Mode.Selector.MelodicDim")
+        # Slots without a mode stay dark.
+        self.assertEqual(self.scenes[7].light, "DefaultButton.Disabled")
+        # Only the five mode slots take a temporary listener.
+        self.assertEqual([len(s.listeners) for s in self.scenes],
+                         [1, 1, 1, 1, 1, 0, 0, 0])
+        self.scenes[3].press()
+        self.assertEqual(self.surface._main_modes.selected_mode, "melodic_sequence")
+        self.assertEqual(self.scenes[3].light, "Mode.Selector.Melodic")
+        self.event("sequencer_mode", False)
+        # Picking a mode wins over the bare-tap fallback, and the temporary
+        # listeners are gone.
+        self.assertEqual(self.surface._main_modes.selected_mode, "melodic_sequence")
+        self.assertEqual([len(s.listeners) for s in self.scenes], [0] * 8)
+
+    def test_tapping_the_active_mode_in_the_selector_returns_to_session(self):
+        self.tap("sequencer_mode")
+        self.assertEqual(self.surface._main_modes.selected_mode, "drum_sequence")
+        self.event("sequencer_mode", True)
+        self.scenes[0].press()
+        self.event("sequencer_mode", False)
+        self.assertEqual(self.surface._main_modes.selected_mode, "session")
+
+    def test_selector_hold_suppresses_the_scene_zero_pin_toggle(self):
+        self.tap("sequencer_mode")
+        self.event("sequencer_mode", True)
+        self.surface._Launchpad_Pro_MK3__on_pin_scene_button_value(127)
+        self.surface._drum_step_sequencer.toggle_pin.assert_not_called()
+        self.event("sequencer_mode", False)
+        self.surface._Launchpad_Pro_MK3__on_pin_scene_button_value(127)
+        self.surface._drum_step_sequencer.toggle_pin.assert_called_once_with()
+
+    def test_session_release_cannot_restore_a_previous_mode(self):
+        self.tap("sequencer_mode")
         self.event("session_mode", True)
         self.event("session_mode", False)
         self.assertEqual(self.surface._main_modes.selected_mode, "session")
         self.event("session_mode", True)
-        self.event("sequencer_mode", True)
+        self.tap("sequencer_mode")
         self.event("session_mode", False)
         self.assertEqual(self.surface._main_modes.selected_mode, "drum_sequence")
 
     def test_picker_cancel_and_select_never_switch_firmware(self):
-        self.event("sequencer_mode", True)
+        self.tap("sequencer_mode")
         self.event("shift", True)
         for _ in range(30):
             self.event("session_mode", True)
@@ -153,7 +224,7 @@ class ProgrammerModesTest(unittest.TestCase):
 
     def test_clear_is_transferred_and_released_across_modes(self):
         self.event("clear", True)
-        self.event("sequencer_mode", True)
+        self.tap("sequencer_mode")
         self.surface._edit_mode.set_delete_held.assert_called_with(False)
         self.surface._drum_step_sequencer.set_action_modifier.assert_called_with("delete", True)
         self.event("clear", False)
@@ -163,7 +234,7 @@ class ProgrammerModesTest(unittest.TestCase):
         self.surface._edit_mode.set_delete_held.assert_called_with(False)
 
     def test_releasing_clear_restores_a_still_held_duplicate(self):
-        self.event("sequencer_mode", True)
+        self.tap("sequencer_mode")
         self.event("duplicate", True)
         self.event("clear", True)
         self.surface._drum_step_sequencer.set_action_modifier.assert_called_with("delete", True)
@@ -171,20 +242,20 @@ class ProgrammerModesTest(unittest.TestCase):
         self.surface._drum_step_sequencer.set_action_modifier.assert_called_with("duplicate", True)
 
     def test_double_loop_is_not_repeated_or_converted_on_mode_change(self):
-        self.event("sequencer_mode", True)
+        self.tap("sequencer_mode")
         self.event("shift", True)
         self.event("duplicate", True)
         self.event("shift", False)
         self.event("session_mode", True)
         self.surface._edit_mode.set_duplicate_held.assert_called_with(False)
-        self.event("sequencer_mode", True)
+        self.tap("sequencer_mode")
         self.surface._drum_step_sequencer.double_loop.assert_called_once_with()
         self.event("duplicate", False)
         self.event("duplicate", True)
         self.surface._drum_step_sequencer.set_action_modifier.assert_called_with("duplicate", True)
 
     def test_reconnect_sends_only_programmer_entry_and_restores_active_mode(self):
-        self.event("sequencer_mode", True)
+        self.tap("sequencer_mode")
         self.surface.on_identified(())
         self.assertEqual(self.surface._main_modes.selected_mode, "drum_sequence")
         self.surface._send_midi.assert_called_once_with(

@@ -58,7 +58,7 @@ Shared `.py` files live at the **repo root**; device-specific modules live in `m
 | `mini/sysex_ids.py` · `pro/sysex_ids.py` | Mini: family (19,1), id 13. Pro: family (35,1), id 14 + layout bytes. |
 | `mini/device_profile.py` · `pro/device_profile.py` | **Device-specific seam.** USB vendor/product, SysEx command bytes (Programmer mode entry, LED feedback, sleep), button CCs, LED palette indices. Same public symbol names on both — swap wholesale when porting. |
 | `programmer_mode.py` | Novation-wide Programmer-mode MIDI conventions: `NOTE_ON_STATUS`, `MIDI_CC_STATUS`, `PROGRAMMER_LED_CHANNEL`, `AUDITION_CHANNEL`. Same on Mini MK3 / X / Pro MK3. |
-| `palette.py` | Shared `DRUM_SEQUENCER_COLOR_VALUES` / `MELODIC_COLOR_VALUES` dicts + `send_pad_color()` helper. Indices 0-127 are the Launchpad firmware palette, identical across models. |
+| `palette.py` | Shared `DRUM_SEQUENCER_COLOR_VALUES` / `MELODIC_COLOR_VALUES` dicts + `send_pad_color()`. Indices 0-127 are the Launchpad firmware palette, identical across models. Also the **RGB SysEx path** (`rgb_shades`, `rgb_sysex_message`, `send_pad_rgb`) for arbitrary shades of one hue — command byte 03h, colour-spec type 03h, 0-127 per channel, many specs per message. Imports `DEVICE_SYSEX_ID` from the overlay's `device_profile`. |
 | `channel_strip_with_arm_toggle.py` | Click unselected → select; click selected → toggle arm. Honors `song.exclusive_arm`. |
 | `clip_copy_component.py` | Clip clipboard. Validates audio/MIDI; uses `duplicate_clip_to`. |
 | `scene_copy_component.py` | Inserts new scene at target index, duplicates non-empty slots, copies name/color/tempo/time-sig. |
@@ -68,7 +68,7 @@ Shared `.py` files live at the **repo root**; device-specific modules live in `m
 | `edit_mode_component.py` | 5th stop-solo-mute sub-mode. Owns the bottom row while active; slots 0-3 are Delete/Duplicate/Move/ColorCycle hold-modifiers, slot 4 is Stop-All-Clips, slot 7 is Undo (or Redo with shift held). Clip slots + scenes route presses to this component when `is_active()` returns True (see [Edit mode](#edit-mode)). |
 | `notifying_background.py` | `BackgroundComponent` that fires `value` instead of swallowing — refreshes layout switch on Drums/Keys press. |
 | `drum_step_sequencer.py` | 4×8 step grid + 4×4 drum-pad selector + 4×4 loop/grid selector. Step-hold gestures (velocity/nudge/extend). Owns LED rendering + audition. |
-| `melodic_step_sequencer.py` | 7×8 pitch×step grid + dual-purpose row 0 (page selector + preview toggle when shift held). |
+| `melodic_step_sequencer.py` | 8×8 pitch×step grid + dual-purpose row 0 (page selector + preview toggle when shift held). Auto-switches to **8 drum lanes** on a Drum Rack track. |
 | `chord_pad_mode.py` | 8×8 chord-pad grid (cols = scale degrees, rows = octave shift). 1-1 audition translation → each pad triggers one root note. Emits `CHORD_TRIGGERED` with full diatonic chord pitches. |
 | `mode_picker.py` | Pro-only grid overlay (Shift+Session): five zones to pick melodic / chord / drum / drum_64 / drum_4_track. Raw palette LED writes; `on_select` callback into the wiring. |
 | `event_bus.py` / `events.py` | Tiny sync pubsub. `Event.*` string constants are the contract between emitters and subscribers. |
@@ -169,6 +169,100 @@ CC 91-94 become pitch-offset controls. `__on_*_button_value` dispatches to `_arr
 - Scales: `_current_scale()` returns from `MELODIC_SCALES[_scale_index]`. Slot 1 (`SCALE_CYCLE_SLOT`) cycles. Slot 0 (`CHROMATIC_SLOT`) toggles `_chromatic_mode`. Toggling does NOT move existing notes (only row→pitch mapping changes); audition translations are rebuilt indirectly via `_pitch_for_row`.
 - `_held_grid_buttons` dedupes note-on bursts so sustained press toggles once.
 - `_ensure_clip` calls `slot.fire()` on create-from-scratch (Push-2 style).
+- **Drum-lane mode** (`DRUM_LANES = 8`): when the selected track carries a Drum Rack,
+  the 8 pitch rows stop being a scale and become **8 simultaneous drum lanes**, one per
+  pad that actually has a device (`_scan_used_drum_pads` filters on `len(pad.chains) > 0`).
+  Drum-keyboard order — lowest pitch on the bottom row (`index = PITCH_ROW_MAX - y`).
+  Automatic, no toggle: `_refresh_targets` resolves the rack and `_drum_lane_mode()`
+  gates everything.
+  - **The rack is resolved from the CLIP's track (`_target_track`), not from
+    `song.view.selected_track`.** Live keeps `detail_clip` open when you select another
+    track, so reading the rack off the selected track wrote scale pitches (C/D/F) into a
+    drum clip whenever the two diverged. `clip.canonical_parent.canonical_parent` gives
+    the track; `selected_track` is only the fallback when no clip is open. Ordering in
+    `_refresh_targets` matters: resolve the clip (`_resolve_clip`, no repaint), then the
+    rack, then paint once — `_refresh_clip` still paints for every other caller.
+  - `_refresh_targets` runs on selected-track change, **detail-clip change**, rack-pad
+    selection and mode enable. It logs `target track: … drum group: …` +
+    `drum lanes: N used pad(s)` — the first thing to check when lanes don't appear.
+  - `_pitch_for_row` returns **`None`** for rows past the end of the rack. Four call
+    sites guard it (press routing, `_update_pitch_leds`, `_update_audition_translations`,
+    `_apply_velocity_from_selector`) — a dead row renders `Disabled`, ignores presses and
+    gets no audition translation. **Any new `_pitch_for_row` caller must handle `None`.**
+  - **The used-pad list is cached in `self._used_pads`.** `_scan_used_drum_pads` walks all
+    128 rack pads; the LED path resolves a pitch per row plus a color per cell, so scanning
+    there was ~10k iterations per playhead tick. Only `_rescan_drum_pads` scans — called
+    from `_refresh_targets`, `set_enabled(True)` (via `_refresh_targets`) and
+    `_on_selected_drum_pad_changed`. Never call `_scan_used_drum_pads` from rendering.
+  - Racks with more than 8 used pads scroll: `adjust_pitch_offset` is re-purposed —
+    `±12` (octave arrows) moves a bank of `DRUM_LANES`, `±1` (semitone arrows) moves one
+    pad. No transposition happens in this mode; the rows *are* the rack.
+  - Chromatic toggle and scale cycle are inert (slots dark) — meaningless on a rack.
+    Capture / Quantize on the same slots are untouched.
+  - Lane anchor: the pad Live has selected in the rack renders in the `Root` color, in
+    place of the scale-root highlight.
+  - Events: `MELODIC_DRUM_MODE` (mode flip) and `MELODIC_DRUM_LANES` (window scrolled).
+- **Lane velocity view** (`LANE_VELOCITY_LEVELS = 8`, `LANE_VELOCITY_STEP = 16`): hold a
+  scene button → the whole grid becomes the velocity profile of that row. Columns = the
+  8 steps of the current page, rows = 8 levels read bottom-up (`level = PITCH_ROW_MAX - y + 1`,
+  grid row 7 = level 1). Tap at a height to set that step's velocity; tapping an empty
+  column creates the note at that velocity (same Push-style rule as the step-hold overlay).
+  Works in scale mode too — it is keyed on rows, not on the rack.
+  - **Scene slots now act on RELEASE.** That is what lets hold and tap share one button:
+    press arms `_lane_velocity_arm_task` (`VELOCITY_OVERLAY_HOLD_DELAY`, so a quick tap
+    never flashes the view), release either closes the view (if it armed) or dispatches
+    to `_perform_control_button_action`. Anything added to that dispatch inherits
+    release-timing — don't move it back to the press edge.
+  - Precedence: device shift > lane view > step-hold 16-level overlay > normal grid.
+    `_lane_velocity_active()` is False while shift is held, `_velocity_overlay_should_show`
+    returns False while the lane view is up, and `_update_loop_leds` skips row 0 so the
+    page selector can't paint over it.
+  - **Mini caveat**: scene 7 is the device shift / stop-solo-mute, owned by
+    `_stop_solo_mute_modes` and untouched by the sequencers, so **row 7's lane view is
+    unreachable on the Mini** (use the step-hold overlay there). All 8 work on the Pro.
+  - 8 levels, not the overlay's 16 — there are only 8 rows. Deliberate split: the lane
+    view shapes a whole line, the step-hold overlay fine-tunes one note. The 16-entry
+    `VELOCITY_LEVEL_PALETTE` is sampled every second entry so the full ramp still shows.
+  - Events: `MELODIC_LANE_VELOCITY_VIEW` (opened) and `MELODIC_LANE_VELOCITY` (edit).
+- **Push-style colour rule set** — the WHOLE melodic surface, not just velocity:
+
+  | role | colour | used for |
+  |------|--------|----------|
+  | content / chosen value | clip hue, shaded (`_shade`, `_shade_for_velocity`) | note velocity, loop inside, current page, selected resolution, preview on, chromatic on, capture ready |
+  | nothing / available | grey ramp (`GREY_EMPTY` → `GREY_BRIGHT`) | empty step, beat marker, anchor row, unselected option, playhead over empty |
+  | "now" / held / anchor | `RGB_WHITE` | playhead over a note, held cell, loop range anchor, held scene |
+
+  **A coloured pad always means something is there** — nothing structural borrows the
+  hue. That is the invariant to preserve when adding a state. Each colour helper
+  (`_pitch_rgb`, `_step_loop_rgb`, `_loop_rgb`, `_grid_cell_color`, `_chromatic_color`,
+  `_scale_or_quantize_color`, `_cycle_color`) returns an `(r, g, b)` tuple on RGB devices
+  and a skin name otherwise; `_set_grid_light` / `_set_control_light` dispatch on type, so
+  call sites are identical on both paths.
+  - **Gated per device by `device_profile.SUPPORTS_RGB_LEDS`** (Pro True, Mini False) —
+    the Mini keeps palette rendering untouched until its script moves to its own project.
+    `RGB_NOTE_SHADES` remains a second module-level escape hatch.
+  - Scene buttons take RGB too: in Programmer mode a button's LED index IS its CC number,
+    so `_set_control_light` addresses them exactly like pads.
+  - **This needs the RGB SysEx path, not the palette.** The firmware palette carries only
+    4 shades per hue (indices `4n..4n+3`) and they are unevenly spaced (green luminance
+    15 / 52 / 150 / 181), so a monotonic ramp past ~3 steps is impossible.
+    `palette.rgb_shades(color, levels, floor)` normalises the clip colour to full
+    intensity first — a dark clip colour would otherwise scale into indistinguishable
+    near-black — then spaces `levels` shades from `floor` to 1.0.
+  - `RGB_NOTE_SHADES = False` falls back to the old 4-tier skin colours. Keep that escape
+    hatch working: the RGB colour-spec type is documented for the Mini MK3 / X and stated
+    for the Pro MK3, but the Pro manual page only spells out types 0/1/2 in the text we
+    could extract.
+  - **Repaints are batched, and the batch is re-entrant.** `update()` opens one batch
+    around all three passes (pitch grid, loop row, scene column) so a full refresh is a
+    SINGLE SysEx instead of ~80 messages; inner `_begin_rgb_batch` calls nest via
+    `_rgb_batch_depth` and only the outermost flush sends. Every RGB write goes through
+    `_write_rgb`, which appends to the open batch or sends alone if there is none — a new
+    write that bypasses it would fire mid-refresh and break the single-message property.
+  - `_on_clip_color_changed` drops the cached ramp so recolouring a clip in Live restyles
+    the grid.
+    `MelodicSequencer.LaneVelocity` (skin only — scene buttons render through the skin,
+    not through `MELODIC_COLOR_VALUES`).
 
 ### Chord pad mode
 
@@ -257,7 +351,7 @@ Components never call `show_message` directly — they emit semantic events on a
 - **`_log`** writes to Ableton's `Log.txt`. Tags: `[Launchpad Mini MK3]`, `[DrumStepSequencer]`, `[MelodicStepSequencer]`, `[ChordPad]`. `install.sh` preserves logs across installs.
 - **`show_message` from components is forbidden** — emit a bus event, let `StatusBarSubscriber` choose wording. Same for M4L: never reference `Msg.*` or `device.parameters` from a component.
 - **`request_rebuild_midi_map()`** must be called after changing button identifiers/channels or `script_forwarding` (audition translations, leaving sequencer mode, etc.).
-- **Color sources are split**: `skin.py` for standard pipeline (`set_light`); sequencer pads + chord pads bypass skin and write raw palette indices (`DRUM_SEQUENCER_COLOR_VALUES` / `MELODIC_COLOR_VALUES` / `CHORD_COLOR_VALUES`). Wrong color = palette dict is source of truth.
+- **Color sources are split three ways**: `skin.py` for the standard pipeline (`set_light`, used by scene/mode buttons); raw palette indices for sequencer + chord pads (`DRUM_SEQUENCER_COLOR_VALUES` / `MELODIC_COLOR_VALUES` / `CHORD_COLOR_VALUES`, via Note On); and **explicit RGB SysEx** for melodic note shading (`palette.send_pad_rgb`). Wrong color: check which of the three owns that pad before editing a dict.
 - **Shift button is `scene_launch_buttons_raw[7]`** (scene buttons stored top-to-bottom via `range(89, 18, -10)`, so 7 = bottom).
 - **`detail_clip` vs `highlighted_clip_slot`**: sequencers prefer `song.view.detail_clip` if valid MIDI; else highlighted slot. `_ensure_clip` creates an empty MIDI clip only if track allows. **Drum sequencer auto-fires the new clip** on create-from-scratch (Push-2 style).
 - **Loop auto-extension is gated by `_clip_just_created`**. Set True ONLY in `_ensure_clip`'s create-from-scratch branch; cleared on clip change, leaving sequencer mode, or any user loop-scoping gesture. `_ensure_loop_contains_time` is the SINGLE gate — it no-ops when False. Consequence: opening an existing clip + adding a note past `loop_end` writes the note but leaves the loop untouched (note silent in current pass). Don't bypass without a strong reason.
@@ -272,10 +366,21 @@ The Pro now stays in Programmer mode for the entire software workflow. The user'
 confirmed blocker was hardware pages opening on button combinations. Never send
 Programmer OFF or select a native layout from a mode-button handler.
 
-- Sequencer (97), with or without Shift: `drum_sequence` (Ableton clip editor).
+- Sequencer (97) is **hold-to-select**, not tap-to-enter. Press → scene_launch_buttons_raw[0..4]
+  become a mode selector (drum / drum64 / drum4-track / melodic / chord, top to bottom;
+  active = bright, others = half). Tap a scene to switch; tap the active mode's scene to
+  bounce back to session. Release → if a mode was tapped, stay there; otherwise land on
+  `drum_sequence` (`_SEQUENCER_TAP_MODE`), preserving the one-press entry to the Ableton
+  clip editor. Shift changes nothing — the selector shows either way. Slots 5-7 stay dark.
+  This is the Mini's User-button gesture ported to a dedicated button; the components'
+  existing `set_user_mode_button` / `_is_main_mode_selector_held` gates are now wired on
+  the Pro (they were deliberately inactive before), so a scene tap during the hold does
+  not also launch a scene or fire a sequencer slot. `__on_pin_scene_button_value` carries
+  the same `_selector_held` guard, and `_set_mode_button_lights` keeps CC 97 white while
+  held so a mid-hold mode switch can't steal the feedback back.
 - Session (93): return to Session clip launch; release does not restore a prior mode.
-- Shift+Session: existing software mode picker. Melodic/chord/alternate drum views
-  remain accessible there, all in Programmer mode.
+- Shift+Session: existing software mode picker (grid overlay). Kept alongside the
+  hold-Sequencer column — same five modes, bigger targets. All in Programmer mode.
 - Note/Chord/Custom/Projects: reserved, consumed by background, dark LEDs.
 - Clear/Duplicate: `_sync_action_modifiers` derives the action from physical holds
   and mode. Clear takes precedence. A consumed Shift+Duplicate cannot become a
@@ -307,6 +412,13 @@ Input and Output on **LPProMK3 MIDI** (first pair, **not MIDIIN3/MIDIOUT3**), th
 reported that it works very well. This is the validated setup to document and use.
 Removing the old surface means its preference assignment, not its script files.
 The detailed gesture/reconnect checklist has not been individually confirmed.
+
+The 4-track sequencer has **no velocity overlay**: the 16-level bar lives on rows 6-7,
+which in that layout are track 0's complete 16-step lane, so arming it blanked a whole
+track (holding a step on track 3 made track 0 vanish). `_velocity_overlay_should_show`
+returns False there and `_arm_velocity_overlay` is a no-op; velocity editing stays on
+the Up/Down arrows (`adjust_held_velocity`, ±8). The shared overlay code is kept intact
+for the sister sequencers, where rows 6-7 are just more steps of the same lane.
 
 `drum_step_sequencer.py` ignores unmatched step/page releases and clears loop
 anchors when disabled. This prevents a release from a previous mode or Shift

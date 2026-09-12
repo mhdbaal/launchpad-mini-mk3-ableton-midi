@@ -110,6 +110,16 @@ _FORMATTERS = {
             "chromatic" if p["on"] else "scale"),
     Event.MELODIC_PREVIEW_MODE:
         lambda p: "Melodic Sequencer: {}".format("preview" if p["on"] else "piano roll"),
+    Event.MELODIC_DRUM_MODE:
+        lambda p: ("Drum lanes: {} used pad{} on this rack".format(
+                       p["count"], "" if p["count"] == 1 else "s")
+                   if p["active"] else "Melodic Sequencer: scale rows"),
+    Event.MELODIC_DRUM_LANES:
+        lambda p: "Drum lanes {}-{} of {}".format(p["first"], p["last"], p["total"]),
+    Event.MELODIC_LANE_VELOCITY_VIEW:
+        lambda p: "Velocity lane: {}".format(p["name"]),
+    Event.MELODIC_LANE_VELOCITY:
+        lambda p: "{} step {} → velocity {}".format(p["name"], p["step"], p["velocity"]),
     Event.MELODIC_NAV_CHANGED:
         lambda p: "Melodic grid {} | page {} | octave {:+d} | semitone {:+d}".format(
             p["label"], p["page"], p["octave"], p["semitone"]),

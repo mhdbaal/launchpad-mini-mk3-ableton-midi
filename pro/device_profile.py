@@ -92,6 +92,13 @@ INERT_BUTTON_CCS = (
     DEVICE_BUTTON_CC,
 )
 
+# The Pro MK3 accepts explicit RGB colour specs (LED-lighting SysEx command
+# 03h, spec type 03h) — validated on hardware 2026-09-12. That unlocks the
+# Push-style shading in the sequencers: arbitrary even shades of one hue,
+# which the 128-index palette cannot do (4 uneven shades per hue).
+# The Mini overlay sets this False and keeps the palette rendering.
+SUPPORTS_RGB_LEDS = True
+
 # --------------------------------- Button LED palette indices (0-127, shared
 # firmware color table across the Launchpad family — only the CHOICES below
 # are Pro-specific UI decisions). Tune on hardware if a shade reads wrong.
@@ -103,6 +110,7 @@ LED_SEQUENCER = 96          # AMBER — drum sequencer active (Sequencer button)
 LED_MELODIC = 41            # BLUE-ISH — melodic sequencer active (Note button)
 LED_CHORD = 53              # PURPLE — chord mode (future, Chord button)
 LED_MODE_IDLE = 1           # dim grey — mode button available but inactive
+LED_MODE_SELECTOR_HELD = 3  # WHITE — Sequencer held, scene column = mode selector
 LED_ARROW_OCTAVE = 27       # GREEN_HALF, matches Control.Octave skin
 LED_ARROW_SEMITONE = 29     # MINT, matches Control.Semitone skin
 # Modifier buttons (left column) — idle dim, bright while held.
