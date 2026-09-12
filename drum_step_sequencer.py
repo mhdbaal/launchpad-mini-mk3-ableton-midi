@@ -298,6 +298,11 @@ class DrumStepSequencerComponent(Component):
             self._playhead = None
             self._held_step_pads = {}
             self._consumed_step_pads = set()
+            self._loop_press_points = []
+            self._loop_range_active = False
+            self._step_loop_press_points = []
+            self._step_loop_range_active = False
+            self._last_page_tap = (-1, 0)
             self._disarm_velocity_overlay()
             # Leaving sequencer mode counts as "done with build-out". Re-entering
             # later should treat the (now unchanged) clip's loop as sacred.
@@ -743,6 +748,8 @@ class DrumStepSequencerComponent(Component):
                 self._emit(Event.DRUM_PAGE_SCOPED, start=start + 1, end=end)
             self._update_bottom_right_leds()
         else:
+            if index not in self._loop_press_points:
+                return
             was_range_active = self._loop_range_active
             if index in self._loop_press_points:
                 self._loop_press_points.remove(index)
@@ -912,6 +919,10 @@ class DrumStepSequencerComponent(Component):
             self._update_step_leds()
             self._update_bottom_right_leds()
         else:
+            # A release can arrive after Shift changed the grid's meaning,
+            # or after another mode owned the press. It must not write a note.
+            if step not in self._held_step_pads:
+                return
             consumed = step in self._consumed_step_pads
             self._consumed_step_pads.discard(step)
             self._held_step_pads.pop(step, None)

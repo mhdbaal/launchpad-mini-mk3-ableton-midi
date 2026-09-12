@@ -1,15 +1,8 @@
 # Custom-mode picker — a grid overlay panel for choosing between OUR
 # script modes (Pro MK3: opened with Shift+Session).
 #
-# Rationale: on the Pro, plain mode-button presses hand the device to its
-# NATIVE engines, and the firmware already owns every Shift+button combo
-# in native land (Shift+Note = scale settings, Shift+Sequencer = sequencer
-# settings, Shift+Projects = save project, ...). Using those combos for
-# our modes collided with that muscle memory — so our modes live behind
-# ONE gesture instead: Shift+Session → a panel of large zones on the 8x8
-# grid. Bonus: a stray Shift+Session pressed in native land makes the
-# firmware switch to the session layout, which the polling reclaim
-# detects — the same reflex leads back to script-land from anywhere.
+# All choices are software modes. The Pro stays in Programmer mode while
+# this panel and the selected sequencer own the grid.
 #
 #   ┌─────────────┬─────────────┐
 #   │   melodic   │ chord pads  │   rows 0-3

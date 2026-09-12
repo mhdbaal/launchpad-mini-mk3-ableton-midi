@@ -235,20 +235,65 @@ The script assembles the shared root files + the device overlay (`mini/` or `pro
 
 ## Launchpad Pro MK3
 
-The Pro port keeps the same modes and sequencers but uses the Pro's dedicated buttons instead of the Mini's hold/double-tap gestures:
+**Required MIDI setup — confirmed working on hardware by the user on 2026-09-12:**
 
-- **Shift** (real button) — copy-paste modifier in session, shift layer in sequencers. No more double-taps or shift lock.
-- **Clear / Duplicate** — hold + tap to delete/duplicate clips & scenes (session) or steps/pads/pages (drum sequencer). Shift+Duplicate doubles the loop.
-- **Quantise** — quantize selection in sequencer modes. **Shift+Record** — Capture MIDI.
-- **Play / Record** — dedicated transport.
-- **Note / Chord / Custom / Sequencer buttons** — the **native firmware modes** (Note, Chord with its 16 saveable chord slots, Custom Modes, hardware step sequencer), with played notes flowing straight into the armed track.
-- **Shift+Session = the custom-modes panel** — five large zones on the grid to pick the melodic sequencer, chord pads, or one of the three drum sequencer variants (classic 4×8, 64-step single pad, 4-track × 16 steps). Shift+Session again (or plain Session) cancels. The same reflex works from native land too: the firmware switches to Session and the script takes back over.
-- **Track-select row + Record Arm/Mute/Solo/Stop Clip** — mixer modes below the grid, so the full 8×8 grid stays clips and all 8 scene buttons launch scenes. Shift+Record Arm = Undo, Shift+Mute = Redo, Shift+Stop Clip = Stop All Clips.
-- **Returning from native modes** — the script is hands-off while a native mode runs; press **Session on the device** to come back to the custom script.
+In Live's **Settings → Link, Tempo & MIDI → Control Surfaces**:
 
-**The Pro script installs as a separate control surface** (`Launchpad Pro MK3 Custom`) — the factory `Launchpad Pro MK3` script is left untouched and both coexist in Live's Control Surface list.
+| Setting | Value |
+| --- | --- |
+| Old factory surface `Launchpad Pro MK3` | Set to **None** (remove its Control Surface assignment) |
+| Surface to keep | **Launchpad Pro MK3 Custom** |
+| Input | **LPProMK3 MIDI** — first port pair |
+| Output | **LPProMK3 MIDI** — first port pair |
 
-Ports: bind the **first** port pair (`LPProMK3 MIDI` on Windows) — that's the Pro's MIDI interface where Programmer-mode LEDs live. Do **not** bind `MIDIIN3` (that's the DAW interface, used by the factory script).
+**Do not select `MIDIIN3 (LPProMK3 MIDI)` / `MIDIOUT3 (LPProMK3 MIDI)` for Custom.**
+These are the DAW ports used by the factory script. Remove the old surface's
+assignment in Live's preferences; **do not delete the factory script files**.
+Keeping both surfaces assigned can cause hardware-mode collisions.
+
+The Pro script stays in **Programmer mode** while it controls Live. All sequencer
+notes belong to Ableton MIDI clips; Live handles playback.
+
+- **Sequencer** — directly opens the Ableton drum step sequencer (also with Shift).
+- **Session** — returns to clip launch. Releasing it keeps the current mode;
+  double-click in Session still opens the overview.
+- **Shift+Session** — opens/closes the software-mode panel. The existing melodic,
+  chord-pad and alternate drum views remain available there.
+- **Note / Chord / Custom / Projects** — reserved, consumed by the script and unlit.
+  They do not open the Launchpad firmware modes or settings pages.
+- **Shift** — copy/paste in Session; the sequencer's secondary controls in Drums.
+- **Clear / Duplicate** — hold while editing clips or drum steps. Clear takes
+  precedence if both are held; releasing it restores Duplicate if still held.
+- **Shift+Duplicate** — doubles the loop once per press in supported sequencers.
+- **Quantise**, **Play / Record**, **Shift+Record** — quantize, transport and Capture MIDI.
+- **Track-select row + Record Arm/Mute/Solo/Stop Clip** — mixer controls in Session.
+  Shift+Record Arm = Undo, Shift+Mute = Redo, Shift+Stop Clip = Stop All Clips.
+
+Use **only `Launchpad Pro MK3 Custom`** for this device in Live's Control Surface
+list. Set any factory **`Launchpad Pro MK3`** entry to **None**, including an entry
+bound to the DAW port: both surfaces can otherwise send conflicting mode commands.
+The existing installation shadow disables factory auto-detection but does not
+clear a factory surface already saved in Live's preferences.
+
+Ports: bind the **first** pair (`LPProMK3 MIDI` on Windows), where Programmer-mode
+input and LEDs operate. `MIDIIN3` / `MIDIOUT3` is the factory DAW interface.
+
+On script disconnection the Pro is returned to Live/Standalone operation.
+The software no longer polls native layouts or switches to hardware Note/Chord/
+Sequencer modes during use.
+
+Build a complete installable ZIP (shared files + device overlay):
+
+```bash
+python3 scripts/build_remote_script.py pro
+python3 scripts/build_remote_script.py mini
+python3 -m unittest discover -s tests -v
+```
+
+Archives are created in `dist/`. Extract the chosen control-surface folder into
+`Remote Scripts` in your Ableton User Library, or use `./install.sh --pro` for the
+existing WSL installation. Avoid installing the same custom surface in both places.
+The installer preserves Live's logs. See the [hardware validation checklist](docs/pro-programmer-validation.md).
 
 ---
 

@@ -14,24 +14,28 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Create release zip
+      - name: Test
+        run: python3 -m unittest discover -s tests -v
+
+      - name: Create release zips
+        env:
+          RELEASE_VERSION: ${{ github.ref_name }}
         run: |
-          mkdir -p Launchpad_Mini_MK3
-          cp *.py README.md Launchpad_Mini_MK3/
-          zip -r Launchpad_Mini_MK3_${{ github.ref_name }}.zip Launchpad_Mini_MK3/
+          python3 scripts/build_remote_script.py mini --version "$RELEASE_VERSION"
+          python3 scripts/build_remote_script.py pro --version "$RELEASE_VERSION"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: Launchpad_Mini_MK3_${{ github.ref_name }}.zip
+          files: dist/*.zip
           generate_release_notes: true
           body: |
             ## Installation
 
-            1. Download the `Launchpad_Mini_MK3_${{ github.ref_name }}.zip` file
-            2. Extract the `Launchpad_Mini_MK3` folder
-            3. Copy it to your Ableton Live MIDI Remote Scripts directory:
-               - **Windows:** `C:\ProgramData\Ableton\Live 12 Suite\Resources\MIDI Remote Scripts\`
-               - **macOS:** `/Applications/Ableton Live 12 Suite.app/Contents/App-Resources/MIDI Remote Scripts/`
+            1. Download the ZIP for your device (Mini or Pro Custom).
+            2. Extract the control-surface folder from the ZIP.
+            3. Copy it into `Remote Scripts` in your Ableton User Library.
             4. Restart Ableton Live
-            5. Go to **Settings → Link, Tempo & MIDI** and select **Launchpad Mini MK3** as a Control Surface
+            5. Select the corresponding Control Surface and ports (see README).
+            6. For Pro Custom, use the first `LPProMK3 MIDI` pair and disable
+               the factory Pro surface if it is assigned to the same device.

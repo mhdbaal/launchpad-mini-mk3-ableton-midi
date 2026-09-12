@@ -254,7 +254,7 @@ Components never call `show_message` directly — they emit semantic events on a
 ## Conventions and gotchas
 
 - **Matrix coordinate quirks**: `ButtonMatrixElement.submatrix[cols, rows]` is `[x, y]`; `matrix.get_button(y, x)` is `(row, col)`. Both forms appear — don't swap blindly.
-- **`_log`** writes to Ableton's `Log.txt`. Tags: `[Launchpad Mini MK3]`, `[DrumStepSequencer]`, `[MelodicStepSequencer]`, `[ChordPad]`. `install.sh` clears the log per install.
+- **`_log`** writes to Ableton's `Log.txt`. Tags: `[Launchpad Mini MK3]`, `[DrumStepSequencer]`, `[MelodicStepSequencer]`, `[ChordPad]`. `install.sh` preserves logs across installs.
 - **`show_message` from components is forbidden** — emit a bus event, let `StatusBarSubscriber` choose wording. Same for M4L: never reference `Msg.*` or `device.parameters` from a component.
 - **`request_rebuild_midi_map()`** must be called after changing button identifiers/channels or `script_forwarding` (audition translations, leaving sequencer mode, etc.).
 - **Color sources are split**: `skin.py` for standard pipeline (`set_light`); sequencer pads + chord pads bypass skin and write raw palette indices (`DRUM_SEQUENCER_COLOR_VALUES` / `MELODIC_COLOR_VALUES` / `CHORD_COLOR_VALUES`). Wrong color = palette dict is source of truth.
@@ -268,54 +268,55 @@ Components never call `show_message` directly — they emit semantic events on a
 
 ## Launchpad Pro MK3 package
 
-`pro/` is a native-UX port of the Mini script: same Programmer-mode takeover, same shared components, but the Mini's button-scarcity workarounds are deleted from the wiring (no User hold-to-select, no double-tap edit entry, no shift lock, no stop-solo-mute tap-cycle, no `_seq_shift_button`). ALL main modes are exposed (unlike the Mini's ergonomic pass): `session` / `drum_sequence` / `drum_64_sequence` / `drum_4_track_sequence` / `melodic_sequence` / `chord_mode`, plus the `variant_picker` overlay.
+The Pro now stays in Programmer mode for the entire software workflow. The user's
+confirmed blocker was hardware pages opening on button combinations. Never send
+Programmer OFF or select a native layout from a mode-button handler.
 
-**Mode panel** (`mode_picker.py`): **Shift+Session** opens a grid overlay with one zone per custom mode — melodic (top-left 4×4), chord pads (top-right 4×4), drum (bottom-left 4×4), drum_64 (x4-7, y4-5), drum_4_track (x4-7, y6-7); the zone of the mode the user came from renders bright. Tap a zone → that mode; Shift+Session again or plain Session → cancel. Why Shift+Session: the firmware owns every Shift+mode-button combo in native land (Shift+Note = scale settings, Shift+Projects = save…), and a stray Shift+Session in native land degrades gracefully — the firmware switches to the session layout, which the polling reclaim detects. The panel is a grid-takeover main mode but NOT in `_SEQUENCER_MODES` (no arrows/audition/scene slots; `_sequencer_for_mode` returns None for it).
+- Sequencer (97), with or without Shift: `drum_sequence` (Ableton clip editor).
+- Session (93): return to Session clip launch; release does not restore a prior mode.
+- Shift+Session: existing software mode picker. Melodic/chord/alternate drum views
+  remain accessible there, all in Programmer mode.
+- Note/Chord/Custom/Projects: reserved, consumed by background, dark LEDs.
+- Clear/Duplicate: `_sync_action_modifiers` derives the action from physical holds
+  and mode. Clear takes precedence. A consumed Shift+Duplicate cannot become a
+  duplicate modifier before its release. Disabled classic drum modifiers are reset
+  before another mode is enabled.
+- Session mixer row remains Session-only in this iteration.
+- No native passthrough components, firmware-note forwarding or layout polling.
+- Identification restores Programmer, refreshes the active mode and paints LEDs.
+  A `None` mode notification during teardown must not re-enable components.
+- Disconnect releases components first, then sends raw Programmer OFF and
+  Standalone SysEx. Do not use disconnected element callbacks for restoration.
+- Only the documented Programmer entry command is sent at startup. The former
+  Mini-style feedback and sleep commands are no longer sent by the Pro.
 
-**Installs as `Launchpad_Pro_MK3_Custom` — the factory `Launchpad_Pro_MK3` code is NEVER modified or deleted** (unlike the Mini, which replaces its factory script). Both appear in Live's Control Surface dropdown; pristine factory copies live in `factory-backup/Launchpad_Pro_MK3/` (repo) and `.Live 12 Suite_updated/Resources/MIDI Remote Scripts/`. install.sh must never delete/replace the factory folder.
+`pro/` still installs as `Launchpad_Pro_MK3_Custom`. Preserve the existing factory
+shadow until an alternative to duplicate auto-detection has been validated. Never
+replace/delete the factory folder. The shadow does NOT remove an already saved
+factory Control Surface slot: it must be set to None in Live.
 
-**Factory auto-detection is neutralized via a shadow `__init__.py`** (the ONE sanctioned, strictly additive write into the factory folder — `apply_factory_shadow` in install.sh, source: `factory-backup/shadow__init__.py`). Both scripts declare USB vendor 4661 / product 291, so Live auto-assigned BOTH on every launch (factory on MIDIIN3 = the DAW port, fighting our Programmer mode AND answering the DAW-port layout notifications the native passthrough depends on). The shadow sits next to the factory `__init__.pyc` (source beats bytecode), drops `get_capabilities()` (no auto-detect; manual selection still works) and logs `[Launchpad Pro MK3 FACTORY]` to Log.txt if the factory is scanned/instantiated anyway. Restore = delete that single `__init__.py`. One-time manual step after first install: a stale prefs slot may still reference the factory — set it to None once; it won't come back.
+The Live **12.4.2** log was found during implementation at
+`/mnt/c/Users/mahed/AppData/Roaming/Ableton/Live 12.4.2/Preferences/Log.txt`.
+On 2026-09-11 it logged factory `create_instance` alongside the custom script.
+This is historical runtime evidence, not proof of the currently active preferences.
+Use the first `LPProMK3 MIDI` pair for Custom; the factory uses the DAW pair.
 
-**Button map** (session · sequencer):
+**User hardware confirmation, 2026-09-12:** after setting the old `Launchpad Pro MK3`
+Control Surface slot to **None** and keeping **Launchpad Pro MK3 Custom** with both
+Input and Output on **LPProMK3 MIDI** (first pair, **not MIDIIN3/MIDIOUT3**), the user
+reported that it works very well. This is the validated setup to document and use.
+Removing the old surface means its preference assignment, not its script files.
+The detailed gesture/reconnect checklist has not been individually confirmed.
 
-| Button (CC) | Session | Sequencer modes |
-|---|---|---|
-| 8×8 grid | clips, **all 8 rows** (no bottom-row sacrifice) | step grid / selectors (unchanged) |
-| Scenes 89→19 | **all 8 launch scenes** (slot 7 freed) | slot 4 = Cycle; slots 0-3/5/6 disabled via `configure_slots` (free for future) |
-| Shift (90) | hold + clip/scene = copy/paste | `set_device_shift_held` (grid resolutions, triplets, melodic row 0) |
-| Clear (60) | hold + tap = delete | hold = `set_action_modifier("delete")` (drum) |
-| Duplicate (50) | hold + tap = duplicate | hold = action-modifier duplicate; Shift+Duplicate = `double_loop()` |
-| Quantise (40) | reserved v1 | `quantize_selected()` |
-| Play (20) / Record (10) | transport; Shift+Record = Capture MIDI (everywhere) | idem |
-| RecArm/Mute/Solo/StopClip (1/2/3/8) | toggle track-row mode (arm/mute/solo/stop); Shift+ = Undo/Redo/—/Stop All (all modes) | combos only |
-| Track row (101-108) | track select (arm-on-2nd-press) or selected role | inert |
-| Session (93) | launch/overview (double-click = overview) · **Shift+Session = OUR MODES panel** (toggle) | preview-hold (plain); Shift+Session = panel; plain press cancels the panel |
-| Note (94) | **NATIVE Note mode** (passthrough) | idem |
-| Chord (95) | **NATIVE chord engine** (real multi-note chords + 16 user chord slots) | idem |
-| Custom (96) | **NATIVE Custom Modes** layout `(3,0,0)` (passthrough) | idem |
-| Sequencer (97) | **NATIVE hardware sequencer** (Steps `(7,0,0)`) | idem |
-| Scene slot 0 | — (scene launch) | **toggle track pin** (not in chord mode — its slot 0 = capture); Session button turns blue while pinned |
-| Arrows (80/70 ↑↓, 91/92 ←→) | session navigation | same roles as Mini (velocity/pitch/nudge/pages) |
+`drum_step_sequencer.py` ignores unmatched step/page releases and clears loop
+anchors when disabled. This prevents a release from a previous mode or Shift
+layer from writing a note or scoping a loop.
 
-Drum variants (drum_64 / drum_4_track) have no delete/duplicate action layer → Clear/Duplicate LEDs go dark there (availability follows `hasattr(target, "set_action_modifier")` / `"quantize_selected"` in `_update_modifier_leds`). Their scene slots are configured like the main drum's: capture/quantize/shift → `None` (dedicated buttons), cycle slot 6 kept. Chord keeps its Mini scene-slot layout.
-
-**Native passthrough** (`NATIVE_PASSTHROUGH_MODE`): plain Note/Chord/Custom/Sequencer presses step aside — all our own components disabled (`clip_launch_matrix`, ch 0, released), then Programmer mode OFF + DAW mode + layout select (note `(4,0,0)` / chord `(2,0,0)` / custom `(3,0,0)` / sequencer steps `(7,0,0)`; full layout table in `pro/sysex_ids.py`). The device's own engines run: real chords (incl. the Chord mode's 2 white columns = user chord slots), native sequencer.
-
-Releasing our components does **not** by itself get the native engines' notes into a track — `pro/__init__.py` declares port 1 (`LPProMK3 MIDI`) as our SCRIPT input, and per `Live.MidiMap.forward_midi_note`/`ScriptForwarding` (`ableton/v2/control_surface/control_surface.py::_install_forwarding`, `input_control_element.py`), a note arriving on a SCRIPT-owned port with **no** installed forwarding is simply dropped, not handed back to Live's normal per-track MIDI routing — disabling a component doesn't undo the port claim. (An earlier version of this doc — and of the code — assumed the opposite; that was never actually verified and is very likely why native-mode recording never worked despite the passthrough SysEx/poll dance being correct.) The real delivery path is `_create_native_note_passthrough`: two always-on `ConfigurablePlayableComponent`s bound to `scale_pads` (ch 15, notes 0-127) and `drum_pads` (ch 8, GM drum-rack notes) — the fixed channels the firmware's Note/Chord/Drum-Rack engines use for their actual musical note output, completely disjoint from `clip_launch_matrix` (ch 0). Mirrors exactly how the **factory** `Launchpad_Pro_MK3` script gets notes into tracks (its `_scale_pad_translator`/`_drum_group`, same `scale_pads`/`drum_pads` elements, unconditionally enabled — it never uses Programmer mode at all). Because the channels never overlap with anything else this script maps, these two components stay enabled through every main mode, no mode-gating needed — they only ever see traffic while the firmware is actually running a native layout. **Not yet hardware-validated**: whether the Pro MK3 firmware really emits on ch 15/ch 8 for Note/Chord layouts the same way older Novation devices do (see hardware-bytes list below) — the onboard hardware **Sequencer**'s own playback channel is a separate unknown the factory script doesn't solve either (it has no "sequencer" main mode at all), so passthrough recording from the onboard sequencer may still need its own investigation even after this fix.
-
-**Return: press Session ON THE DEVICE** — detected by polling `layout_switch.enquire_value()` every 0.8s (notifications go to the DAW port we're not bound to; the `_passthrough_armed` flag requires one non-session reading first). Enquiry responses confirmed arriving on port 1 (hardware-validated 2026-06-06; `layout read-back:` logs layout *changes* only). **Task gotcha**: the poll is `task.loop(task.sequence(wait, run))` on the surface's own `self._tasks` — a plain sequence restarted from inside its own `task.run` dies after one cycle (the FuncTask self-kills right after running, clobbering the restart), and component task groups pause when their component is disabled. Don't "simplify" it back. Every passthrough exit path resets state: `__on_main_mode_changed`'s reclaim guard (side-door exits, e.g. mode-panel pick) and `on_identified` (port reconnect mid-passthrough) — both prevent a deaf zombie where the mode stays `native_passthrough` after Programmer mode is back on. Manual fallback: device Setup page → Live/Programmer toggle.
-
-Inert in v1 (LED dark, swallowed by background): Projects (98), Fixed Length (30), Volume/Pan/Sends/Device (4-7 — button faders need the DAW fader layout).
-
-**Pro-specific wiring patterns**: `EditModeComponent` runs **standalone** (`set_standalone(True)`, always enabled in session; `is_active()` = modifier held, so bare presses still launch). Dedicated buttons use direct value listeners + raw CC LEDs (`_update_modifier_leds` / `_update_mixer_function_leds`) — the same pattern as the Mini's transport, no Layer competition. The track-row mixer modes are a plain `ModesComponent` whose `selected_mode` is set by the function-button listeners (shift-combo checked first).
-
-**Hardware bytes still to validate on device** (suspect these first if something is dark):
-1. Live preferences must bind the **1st port pair** (`LPProMK3 MIDI` on Windows) — confirmed by the LP Pro MK3 Programmer's Reference: Programmer-mode LEDs only work through the MIDI interface (1st), NOT the DAW interface (MIDIIN3). Symptom of the wrong pair (observed 2026-06-06): device enters programmer mode and goes fully dark, pad presses leak into Live tracks as plain notes.
-2. Programmer-mode entry `F0 00 20 29 02 0E 0E 01 F7` — if grid LEDs don't respond to Note On ch 0 on the right port, this is wrong.
-3. LED writes on CC 101-108 / CC 1-8 (`B0 65 05` test).
-4. Feedback (cmd 10) / sleep (cmd 9) commands — assumed Novation-wide; harmless if ignored, remove from `_enter_programmer_mode` if they cause trouble.
-5. Setup button behavior (must not silently exit Programmer mode).
-6. `scale_pads` (ch 15) / `drum_pads` (ch 8) actually carrying the Note/Chord/Drum-Rack engines' note output on the Pro MK3 (see "Native passthrough" above) — arm a track, enter each native mode, press pads, confirm notes actually record. If nothing arrives, try channel 0 (identity, no reassignment) before assuming the whole mechanism is wrong — MIDI-map logging or a MIDI monitor between the device and Live would confirm the real channel/identifier the firmware sends.
+Run `python3 -m unittest discover -s tests -v`: handler tests substitute unavailable
+Live imports/listener descriptors and use fake objects; they do not validate the
+Live framework or hardware. Package tests check each assembled overlay and its
+relative imports. Build ZIPs with `scripts/build_remote_script.py pro|mini`.
+See `docs/pro-programmer-validation.md` for the device test sequence.
 
 ## Porting to other Launchpads
 
@@ -331,7 +332,7 @@ Adding a device = new overlay dir (5 files: `__init__.py`, `sysex_ids.py`, `devi
 No way to run this outside Live — Ableton owns the Python runtime. Loop:
 
 1. Edit `.py` files (shared at repo root, device-specific in `mini/` / `pro/`).
-2. Run `./install.sh [--mini|--pro|--all]` (assembles + copies to the Windows-side MIDI Remote Scripts dirs, deletes `Log.txt` once to give a clean read).
+2. Run `./install.sh [--mini|--pro|--all]` (assembles + copies to the Windows-side MIDI Remote Scripts dirs; preserves logs).
 3. User restarts Ableton Live (full restart — reloading control surface is not enough).
 4. If broken, read log via paths below.
 
@@ -341,9 +342,9 @@ Stay quiet about restart instructions — the user knows.
 
 - Source: `/home/mahed/projects/launchpad-mini-mk3-script/`
 - Install targets: `/mnt/c/ProgramData/Ableton/Live 12 Suite/Resources/MIDI Remote Scripts/Launchpad_Mini_MK3/` and `.../Launchpad_Pro_MK3_Custom/` (the factory `Launchpad_Pro_MK3` stays untouched)
-- Ableton log: `/mnt/c/Users/mahed/AppData/Roaming/Ableton/Live 12.3/Preferences/Log.txt`
+- Ableton log: `/mnt/c/Users/mahed/AppData/Roaming/Ableton/Live 12.4.2/Preferences/Log.txt`
 
-All hard-coded in `install.sh`. No fallback discovery — update if Live version changes.
+Install paths are hard-coded in `install.sh`. Locate the active version’s log under the Ableton preferences folders.
 
 ### Sanity check
 
@@ -351,7 +352,7 @@ All hard-coded in `install.sh`. No fallback discovery — update if Live version
 python3 -m py_compile *.py mini/*.py pro/*.py
 ```
 
-Catches syntax errors. Cannot validate Ableton API (modules not importable here). No test suite, no linting.
+Catches syntax errors. Cannot validate Ableton API (modules not importable here). Also run `python3 -m unittest discover -s tests -v` for isolated handlers and packaging.
 
 ### MIDI port reminder
 

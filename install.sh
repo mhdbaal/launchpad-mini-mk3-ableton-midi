@@ -24,7 +24,6 @@ NC='\033[0m' # No Color
 # Chemins
 SOURCE_DIR="/home/mahed/projects/launchpad-mini-mk3-script"
 DEST_PARENT="/mnt/c/ProgramData/Ableton/Live 12 Suite/Resources/MIDI Remote Scripts"
-LOG_FILE="/mnt/c/Users/mahed/AppData/Roaming/Ableton/Live 12.3/Preferences/Log.txt"
 
 # Sélection des cibles
 INSTALL_MINI=false
@@ -126,13 +125,7 @@ apply_factory_shadow() {
 [ "$INSTALL_PRO" = true ] && install_device pro Launchpad_Pro_MK3_Custom
 [ "$INSTALL_PRO" = true ] && apply_factory_shadow
 
-# Supprimer le log Ableton (une seule fois, partagé par toute l'instance Live)
-if [ -f "$LOG_FILE" ]; then
-    rm "$LOG_FILE" && echo -e "${GREEN}✓ Logs Ableton supprimés${NC}" \
-        || echo -e "${RED}✗ Erreur lors de la suppression des logs${NC}"
-else
-    echo -e "${YELLOW}⚠ Fichier de log non trouvé (pas d'erreur)${NC}"
-fi
+# Preserve Ableton's logs across installs so mode collisions can be diagnosed.
 
 echo ""
 echo -e "${GREEN}=== Installation terminée avec succès! ===${NC}"
